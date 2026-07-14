@@ -325,6 +325,13 @@ export default function ProfileView({
                           </span>
                         </div>
 
+                        <div className="text-right">
+                          <span className="block text-[8px] font-bold text-app-text-secondary uppercase font-mono">Grade</span>
+                          <span className="text-sm font-black text-app-text-primary">
+                            {proj.grade_rece || "N/A"}
+                          </span>
+                        </div>
+
                         {isOwner && onEditProjectReview && (
                           <button
                             onClick={() => onEditProjectReview(proj)}

@@ -63,6 +63,7 @@ export interface Project {
   type?: string;
   taken_in: string;
   experience: string;
+  grade_rece?: string;
   user_id?: string;
   created_at?: string;
 }

@@ -1341,6 +1341,7 @@ export default function App() {
       type: projectData.type,
       taken_in: projectData.taken_in,
       experience: projectData.experience,
+      grade_rece: projectData.grade_rece,
       user_id: supabaseUserId,
     };
 
@@ -1410,6 +1411,7 @@ export default function App() {
       type: projectData.type,
       taken_in: projectData.taken_in,
       experience: projectData.experience,
+      grade_rece: projectData.grade_rece,
       user_id: supabaseUserId || undefined,
       created_at: insertedProject?.created_at || new Date().toISOString(),
     };

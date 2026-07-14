@@ -234,7 +234,7 @@ export default function ProjectsView({
         </div>
 
         {/* Metrics Row (Matches CourseDetails.tsx 4-box layout) */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {/* Department */}
           <div className="rounded-2xl border border-app-border bg-app-surface p-5 flex flex-col justify-between shadow-sm">
             <span className="text-[10px] font-bold text-app-text-secondary uppercase tracking-wider font-mono">
@@ -280,6 +280,16 @@ export default function ProjectsView({
               ) : (
                 "Recent"
               ))}
+            </div>
+          </div>
+
+          {/* Grade Received */}
+          <div className="rounded-2xl border border-app-border bg-app-surface p-5 flex flex-col justify-between shadow-sm">
+            <span className="text-[10px] font-bold text-app-text-secondary uppercase tracking-wider font-mono">
+              Grade Received
+            </span>
+            <div className="mt-2 text-sm sm:text-base font-black text-app-text-primary font-sans leading-tight">
+              {selectedProject.grade_rece || "Not specified"}
             </div>
           </div>
         </div>

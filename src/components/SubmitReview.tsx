@@ -27,7 +27,7 @@ interface SubmitReviewProps {
   reviewToEdit?: Review | null;
   onCancelEdit?: () => void;
   onProjectsClick?: () => void;
-  onSubmitProject?: (projectData: Omit<any, "id" | "created_at">, projectToEdit?: Project | null) => Promise<boolean>;
+  onSubmitProject?: (projectData: Omit<Project, "id" | "created_at">, projectToEdit?: Project | null) => Promise<boolean>;
   onSuccessProjectReturn?: () => void;
   initialCategory?: "HEL" | "OPEL_DEL" | "projects";
   projectToEdit?: Project | null;
@@ -86,6 +86,7 @@ export default function SubmitReview({
   const [takenIn, setTakenIn] = useState(semesterOptions[0]);
   const [projectInfo, setProjectInfo] = useState("");
   const [experience, setExperience] = useState("");
+  const [gradeRece, setGradeRece] = useState("");
   const [isSubmittingProject, setIsSubmittingProject] = useState(false);
 
   // Error messages
@@ -161,6 +162,7 @@ export default function SubmitReview({
       setTakenIn(semesterOptions.includes(projectToEdit.taken_in) ? projectToEdit.taken_in : semesterOptions[0]);
       setProjectInfo(projectToEdit.project_info || "");
       setExperience(projectToEdit.experience || "");
+      setGradeRece(projectToEdit.grade_rece || "");
       setStep(1);
       setSuccess(false);
       setError("");
@@ -251,6 +253,10 @@ export default function SubmitReview({
           setError("Please select the project type.");
           return false;
         }
+        if (!gradeRece) {
+          setError("Please select the grade received.");
+          return false;
+        }
       } else if (step === 2) {
         if (!projectInfo.trim()) {
           setError("Please provide a brief description of the project.");
@@ -339,6 +345,7 @@ export default function SubmitReview({
           taken_in: takenIn,
           project_info: projectInfo.trim(),
           experience: experience.trim(),
+          grade_rece: gradeRece,
         };
         if (onSubmitProject) {
           const completed = await onSubmitProject(projectData, projectToEdit);
@@ -470,6 +477,7 @@ export default function SubmitReview({
                   setStudentBranch("");
                   setProjectInfo("");
                   setExperience("");
+                  setGradeRece("");
                   setStep(1);
                   setSuccess(false);
                   setError("");
@@ -801,6 +809,25 @@ export default function SubmitReview({
                       {semesterOptions.map((sem) => (
                         <option key={sem} value={sem}>
                           {sem}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Grade Received */}
+                  <div>
+                    <label className="block text-xs font-bold text-app-text-secondary uppercase tracking-wider mb-1.5 font-mono">
+                      Grade Received
+                    </label>
+                    <select
+                      value={gradeRece}
+                      onChange={(e) => setGradeRece(e.target.value)}
+                      className="w-full rounded-xl border border-app-border bg-app-bg px-3.5 py-2.5 text-sm font-medium text-app-text-primary shadow-sm focus:border-app-accent focus:outline-none font-sans"
+                    >
+                      <option value="" className="bg-app-bg text-app-text-primary">Select Grade</option>
+                      {gradesList.map((gr) => (
+                        <option key={gr} value={gr} className="bg-app-bg text-app-text-primary">
+                          {gr}
                         </option>
                       ))}
                     </select>
