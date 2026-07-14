@@ -40,13 +40,13 @@ function getBitsIdAndName(email: string, fullName?: string) {
   }
 
   const idNo = `${year}A7PS${seqNo}G`;
-  
+
   let name = fullName;
   if (!name) {
     const nameParts = prefix.replace(/\d+/g, "").split(/[._]/).map(p => p.charAt(0).toUpperCase() + p.slice(1));
     name = nameParts.filter(Boolean).join(" ") || "Student BITSian";
   }
-  
+
   return { idNo, name };
 }
 
@@ -143,6 +143,9 @@ export default function App() {
   // Edit Review State
   const [reviewToEdit, setReviewToEdit] = useState<Review | null>(null);
   const [reviewToDeleteId, setReviewToDeleteId] = useState<string | null>(null);
+  const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
+  const [projectToDeleteId, setProjectToDeleteId] = useState<string | number | null>(null);
+  const [currentSupabaseUserId, setCurrentSupabaseUserId] = useState<string | null>(null);
 
   // Filter & Search States
   const [searchQuery, setSearchQuery] = useState("");
@@ -809,6 +812,8 @@ export default function App() {
   useEffect(() => {
     const syncUserFromSession = async (session: any) => {
       const authenticatedUser = getAuthenticatedUserFromSession(session);
+      const supabaseUserId = session?.user?.id ?? null;
+      setCurrentSupabaseUserId(supabaseUserId);
       if (authenticatedUser) {
         setUser(authenticatedUser);
         setLoginError("");
@@ -837,6 +842,7 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT" || !session?.user) {
         setUser(null);
+        setCurrentSupabaseUserId(null);
         setLoginError("");
         return;
       }
@@ -929,6 +935,10 @@ export default function App() {
     setReviewToDeleteId(reviewId);
   };
 
+  const handleDeleteProjectReview = (projectId: string | number) => {
+    setProjectToDeleteId(projectId);
+  };
+
   // Perform actual deletion from Supabase and update local state immediately
   const executeDeleteReview = async (reviewId: string) => {
     const reviewToDelete = reviews.find((r) => r.id === reviewId);
@@ -976,9 +986,9 @@ export default function App() {
           const grades = courseReviews.map((r) => r.gradeReceived).filter(g => g && g !== "—");
           const commonGrade = grades.length > 0
             ? grades.sort(
-                (a, b) =>
-                  grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
-              ).pop()
+              (a, b) =>
+                grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
+            ).pop()
             : undefined;
 
           // Simple average marks extraction
@@ -1014,9 +1024,9 @@ export default function App() {
         const grades = courseReviews.map((r) => r.gradeReceived).filter(g => g && g !== "—");
         const commonGrade = grades.length > 0
           ? grades.sort(
-              (a, b) =>
-                grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
-            ).pop()
+            (a, b) =>
+              grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
+          ).pop()
           : undefined;
 
         const numericMarks = courseReviews
@@ -1054,6 +1064,35 @@ export default function App() {
       }
     } catch (err) {
       console.warn("Supabase delete failed, falling back to local state:", err);
+    }
+  };
+
+  const executeDeleteProjectReview = async (projectId: string | number) => {
+    const projectToDelete = projects.find((project) => String(project.id) === String(projectId));
+    if (!projectToDelete) return;
+
+    const isOwnProject = Boolean(currentSupabaseUserId && projectToDelete.user_id === currentSupabaseUserId);
+    if (!isOwnProject) {
+      console.error("Unauthorized project deletion attempt.");
+      return;
+    }
+
+    setProjects((prevProjects) => prevProjects.filter((project) => String(project.id) !== String(projectId)));
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .delete()
+        .eq("id", projectId)
+        .eq("user_id", currentSupabaseUserId);
+
+      if (error) {
+        console.error("Error deleting project review from Supabase:", error.message, error.details || "", error.hint || "");
+      } else {
+        console.log("Successfully deleted project review from Supabase:", projectId);
+      }
+    } catch (err) {
+      console.warn("Supabase project delete failed, falling back to local state:", err);
     }
   };
 
@@ -1138,7 +1177,7 @@ export default function App() {
           if (c.id === courseId) {
             // Recalculate based on the updated list of reviews
             const courseReviews = reviews.map((r) => (r.id === newReview.id ? updatedReview : r)).filter((r) => r.courseId === c.id);
-            
+
             const grades = courseReviews.map((r) => r.gradeReceived);
             const commonGrade = grades.sort(
               (a, b) =>
@@ -1280,7 +1319,10 @@ export default function App() {
   };
 
   // Handle Project Submission
-  const handleSubmitProject = async (projectData: Omit<Project, "id" | "created_at">): Promise<boolean> => {
+  const handleSubmitProject = async (
+    projectData: Omit<Project, "id" | "created_at">,
+    projectToEdit?: Project | null
+  ): Promise<boolean> => {
     let supabaseUserId: string | null = null;
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -1301,6 +1343,44 @@ export default function App() {
       experience: projectData.experience,
       user_id: supabaseUserId,
     };
+
+    if (projectToEdit) {
+      const isOwnProject = Boolean(supabaseUserId && projectToEdit.user_id === supabaseUserId);
+      if (!isOwnProject) {
+        console.error("Unauthorized project edit attempt.");
+        return false;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("projects")
+          .update(dbRow)
+          .eq("id", projectToEdit.id)
+          .eq("user_id", supabaseUserId)
+          .select()
+          .single();
+
+        if (error) {
+          console.error("Error updating project review in Supabase:", error.message);
+          return false;
+        }
+
+        const updatedProject: Project = {
+          ...projectToEdit,
+          ...projectData,
+          id: projectToEdit.id,
+          user_id: supabaseUserId || projectToEdit.user_id,
+          created_at: data?.created_at || projectToEdit.created_at,
+        };
+
+        setProjects((prev) => prev.map((project) => (String(project.id) === String(projectToEdit.id) ? updatedProject : project)));
+        setProjectToEdit(null);
+        return true;
+      } catch (err) {
+        console.warn("Supabase project update failed, falling back to local state:", err);
+        return false;
+      }
+    }
 
     let insertedProject: any = null;
     try {
@@ -1394,10 +1474,10 @@ export default function App() {
         const matchingDelDRows = delDMappings.filter((d) => {
           return (d.branch_dep || "").trim().toUpperCase() === filterDept.trim().toUpperCase();
         });
-        
+
         // Retrieve corresponding course_code values
         const fetchedCourseCodes = matchingDelDRows.map((d) => (d.course_code || "").trim().toUpperCase());
-        
+
         // Temporary log: fetched course codes from del_d
         console.log("fetched course codes from del_d:", fetchedCourseCodes);
 
@@ -1512,6 +1592,11 @@ export default function App() {
     }
   }, [selectedCategory, filterDept, delDMappings, courses, searchQuery]);
 
+  const userProjectReviews = useMemo(() => {
+    if (!currentSupabaseUserId) return [];
+    return projects.filter((project) => project.user_id === currentSupabaseUserId);
+  }, [projects, currentSupabaseUserId]);
+
   const isAuthCallbackRoute = window.location.pathname === "/auth-callback" || window.location.pathname === "/auth-callback/";
 
   if (isAuthCallbackRoute) {
@@ -1548,494 +1633,512 @@ export default function App() {
 
   return (
     <BookmarkCountsContext.Provider value={{ bookmarkCounts }}>
-    <div className="min-h-screen bg-app-bg text-app-text-primary flex flex-col font-sans transition-colors duration-200">
-      {/* Main Header */}
-      <Header
-        activePage={activePage}
-        setActivePage={(page) => {
-          if (page === "submit-review") {
-            setSubmitReviewInitialCategory("HEL");
-          }
-          setActivePage(page);
-          setReviewToEdit(null);
-          if (page === "home") setSelectedCategory(null);
-        }}
-        user={user}
-        onLogout={async () => {
-          await supabase.auth.signOut();
-          setUser(null);
-          setActivePage("home");
-        }}
-        onLoginClick={() => {
-          setLoginError("");
-          setShowLoginModal(true);
-        }}
-        theme={theme}
-        onToggleTheme={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-      />
+      <div className="min-h-screen bg-app-bg text-app-text-primary flex flex-col font-sans transition-colors duration-200">
+        {/* Main Header */}
+        <Header
+          activePage={activePage}
+          setActivePage={(page) => {
+            if (page === "submit-review") {
+              setSubmitReviewInitialCategory("HEL");
+            }
+            setActivePage(page);
+            setReviewToEdit(null);
+            if (page === "home") setSelectedCategory(null);
+          }}
+          user={user}
+          onLogout={async () => {
+            await supabase.auth.signOut();
+            setUser(null);
+            setActivePage("home");
+          }}
+          onLoginClick={() => {
+            setLoginError("");
+            setShowLoginModal(true);
+          }}
+          theme={theme}
+          onToggleTheme={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+        />
 
-      {/* Content Canvas */}
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-        <AnimatePresence mode="wait">
-          {/* LOGIN MODAL OVERLAY */}
-          {showLoginModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-              <div
-                className="absolute inset-0 bg-black/60 backdrop-blur-md"
-                onClick={() => {
-                  setLoginError("");
-                  setShowLoginModal(false);
-                }}
-              />
-              <div className="relative z-10 w-full max-w-md">
-                <LoginView
-                  parentError={loginError}
-                  onLoginSuccess={() => {
-                    setLoginError("");
-                    setShowLoginModal(false);
-                  }}
-                  onClose={() => {
+        {/* Content Canvas */}
+        <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+          <AnimatePresence mode="wait">
+            {/* LOGIN MODAL OVERLAY */}
+            {showLoginModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div
+                  className="absolute inset-0 bg-black/60 backdrop-blur-md"
+                  onClick={() => {
                     setLoginError("");
                     setShowLoginModal(false);
                   }}
                 />
-              </div>
-            </div>
-          )}
-
-          {/* PAGE: Home (Category Selection) */}
-          {activePage === "home" && (
-            <motion.div
-              key="home-page"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <CategorySelection
-                onSelectCategory={handleSelectCategory}
-                setActivePage={(page) => {
-                  if (page === "submit-review") {
-                    setSubmitReviewInitialCategory("HEL");
-                  }
-                  setActivePage(page);
-                }}
-              />
-            </motion.div>
-          )}
-
-          {/* PAGE: Browse Courses */}
-          {activePage === "browse" && (
-            <motion.div
-              key="browse-page"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              className="space-y-8 py-4"
-            >
-              {/* Category Breadcrumb & Selector Toggle */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-app-border pb-4">
-                <div>
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-app-text-secondary">
-                    <button
-                      onClick={() => {
-                        setActivePage("home");
-                        setSelectedCategory(null);
-                      }}
-                      className="hover:text-app-text-primary transition-colors"
-                    >
-                      Categories
-                    </button>
-                    <span>/</span>
-                    <span className="text-app-text-primary">
-                      {selectedCategory === "HEL" ? "Humanities Electives" : "Open/Discipline Electives"}
-                    </span>
-                  </div>
-                  <h1 className="font-sans text-3xl font-extrabold tracking-tight text-app-text-primary mt-1">
-                    Browse Electives
-                  </h1>
-                </div>
-
-                {/* Sub-Category Toggle pills */}
-                <div className="flex bg-app-bg p-1 rounded-xl border border-app-border">
-                  <button
-                    onClick={() => setSelectedCategory("HEL")}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                      selectedCategory === "HEL"
-                        ? "bg-app-accent text-white shadow-sm"
-                        : "text-app-text-secondary hover:text-app-text-primary"
-                    }`}
-                  >
-                    Humanities (HEL)
-                  </button>
-                  <button
-                    onClick={() => setSelectedCategory("OPEL_DEL")}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                      selectedCategory === "OPEL_DEL"
-                        ? "bg-app-accent text-white shadow-sm"
-                        : "text-app-text-secondary hover:text-app-text-primary"
-                    }`}
-                  >
-                    Open & Discipline
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActivePage("projects");
+                <div className="relative z-10 w-full max-w-md">
+                  <LoginView
+                    parentError={loginError}
+                    onLoginSuccess={() => {
+                      setLoginError("");
+                      setShowLoginModal(false);
                     }}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                      activePage === "projects"
-                        ? "bg-app-accent text-white shadow-sm"
-                        : "text-app-text-secondary hover:text-app-text-primary"
-                    }`}
-                  >
-                    Projects
-                  </button>
-                </div>
-              </div>
-
-              {/* Giant search / filters block */}
-              <div className="grid gap-4 md:grid-cols-12 items-center">
-                {/* Search input container */}
-                <div className="relative md:col-span-6 lg:col-span-8">
-                  <Search className="absolute left-4 top-3.5 h-5 w-5 text-app-text-secondary/60" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search by course code, name, instructor or abbreviation..."
-                    className="w-full rounded-2xl border border-app-border bg-app-surface py-3.5 pl-11.5 pr-4 text-sm text-app-text-primary placeholder:text-app-text-secondary/40 focus:border-app-accent focus:outline-none focus:ring-1 focus:ring-app-accent"
+                    onClose={() => {
+                      setLoginError("");
+                      setShowLoginModal(false);
+                    }}
                   />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery("")}
-                      className="absolute right-4 top-3.5 text-xs text-app-text-secondary hover:text-app-text-primary"
-                    >
-                      Clear
-                    </button>
-                  )}
                 </div>
+              </div>
+            )}
 
-                {/* Sort dropdown */}
-                <div className="relative md:col-span-3 lg:col-span-2">
-                  <button
-                    onClick={() => {
-                      setIsSortOpen(!isSortOpen);
-                      setIsFilterOpen(false);
-                    }}
-                    className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
-                  >
-                    <div className="flex items-center gap-2">
-                      <SlidersHorizontal className="h-4 w-4 text-zinc-400" />
-                      <span>
-                        Sort: {sortOption === "reviews" ? "Reviews" : sortOption === "name" ? "Name" : sortOption === "code" ? "Code" : "Grade"}
+            {/* PAGE: Home (Category Selection) */}
+            {activePage === "home" && (
+              <motion.div
+                key="home-page"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <CategorySelection
+                  onSelectCategory={handleSelectCategory}
+                  setActivePage={(page) => {
+                    if (page === "submit-review") {
+                      setSubmitReviewInitialCategory("HEL");
+                    }
+                    setActivePage(page);
+                  }}
+                />
+              </motion.div>
+            )}
+
+            {/* PAGE: Browse Courses */}
+            {activePage === "browse" && (
+              <motion.div
+                key="browse-page"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="space-y-8 py-4"
+              >
+                {/* Category Breadcrumb & Selector Toggle */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-app-border pb-4">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-app-text-secondary">
+                      <button
+                        onClick={() => {
+                          setActivePage("home");
+                          setSelectedCategory(null);
+                        }}
+                        className="hover:text-app-text-primary transition-colors"
+                      >
+                        Categories
+                      </button>
+                      <span>/</span>
+                      <span className="text-app-text-primary">
+                        {selectedCategory === "HEL" ? "Humanities Electives" : "Open/Discipline Electives"}
                       </span>
                     </div>
-                    <ChevronDown className={`h-4 w-4 text-zinc-500 transition-transform ${isSortOpen ? "rotate-180" : ""}`} />
-                  </button>
+                    <h1 className="font-sans text-3xl font-extrabold tracking-tight text-app-text-primary mt-1">
+                      Browse Electives
+                    </h1>
+                  </div>
 
-                  <AnimatePresence>
-                    {isSortOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 5 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 5 }}
-                        className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md"
-                      >
-                        {[
-                          { key: "reviews", label: "Most Reviews" },
-                          { key: "name", label: "Course Name (A-Z)" },
-                          { key: "code", label: "Course Code (A-Z)" },
-                          { key: "grade", label: "Average Grade (A-C)" },
-                        ].map((opt) => (
-                          <button
-                            key={opt.key}
-                            onClick={() => {
-                              setSortOption(opt.key as any);
-                              setIsSortOpen(false);
-                            }}
-                            className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
-                              sortOption === opt.key ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                  {/* Sub-Category Toggle pills */}
+                  <div className="flex bg-app-bg p-1 rounded-xl border border-app-border">
+                    <button
+                      onClick={() => setSelectedCategory("HEL")}
+                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${selectedCategory === "HEL"
+                          ? "bg-app-accent text-white shadow-sm"
+                          : "text-app-text-secondary hover:text-app-text-primary"
+                        }`}
+                    >
+                      Humanities (HEL)
+                    </button>
+                    <button
+                      onClick={() => setSelectedCategory("OPEL_DEL")}
+                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${selectedCategory === "OPEL_DEL"
+                          ? "bg-app-accent text-white shadow-sm"
+                          : "text-app-text-secondary hover:text-app-text-primary"
+                        }`}
+                    >
+                      Open & Discipline
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActivePage("projects");
+                      }}
+                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${activePage === "projects"
+                          ? "bg-app-accent text-white shadow-sm"
+                          : "text-app-text-secondary hover:text-app-text-primary"
+                        }`}
+                    >
+                      Projects
+                    </button>
+                  </div>
                 </div>
 
-                {/* Filter dropdown */}
-                <div className="relative md:col-span-3 lg:col-span-2">
-                  <button
-                    onClick={() => {
-                      setIsFilterOpen(!isFilterOpen);
-                      setIsSortOpen(false);
-                    }}
-                    className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Filter className="h-4 w-4 text-app-text-secondary/60" />
-                      <span>Filter: {filterDept === "all" ? "All" : filterDept}</span>
-                    </div>
-                    <ChevronDown className={`h-4 w-4 text-app-text-secondary/60 transition-transform ${isFilterOpen ? "rotate-180" : ""}`} />
-                  </button>
-
-                  <AnimatePresence>
-                    {isFilterOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 5 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 5 }}
-                        className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md max-h-60 overflow-y-auto"
+                {/* Giant search / filters block */}
+                <div className="grid gap-4 md:grid-cols-12 items-center">
+                  {/* Search input container */}
+                  <div className="relative md:col-span-6 lg:col-span-8">
+                    <Search className="absolute left-4 top-3.5 h-5 w-5 text-app-text-secondary/60" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search by course code, name, instructor or abbreviation..."
+                      className="w-full rounded-2xl border border-app-border bg-app-surface py-3.5 pl-11.5 pr-4 text-sm text-app-text-primary placeholder:text-app-text-secondary/40 focus:border-app-accent focus:outline-none focus:ring-1 focus:ring-app-accent"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-4 top-3.5 text-xs text-app-text-secondary hover:text-app-text-primary"
                       >
-                        {["all", ...distinctDepartments].map((dept) => (
-                          <button
-                            key={dept}
-                            onClick={() => {
-                              setFilterDept(dept);
-                              setIsFilterOpen(false);
-                            }}
-                            className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
-                              filterDept === dept ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
-                            }`}
-                          >
-                            {dept === "all" ? "All Departments" : dept}
-                          </button>
-                        ))}
-                      </motion.div>
+                        Clear
+                      </button>
                     )}
-                  </AnimatePresence>
+                  </div>
+
+                  {/* Sort dropdown */}
+                  <div className="relative md:col-span-3 lg:col-span-2">
+                    <button
+                      onClick={() => {
+                        setIsSortOpen(!isSortOpen);
+                        setIsFilterOpen(false);
+                      }}
+                      className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
+                    >
+                      <div className="flex items-center gap-2">
+                        <SlidersHorizontal className="h-4 w-4 text-zinc-400" />
+                        <span>
+                          Sort: {sortOption === "reviews" ? "Reviews" : sortOption === "name" ? "Name" : sortOption === "code" ? "Code" : "Grade"}
+                        </span>
+                      </div>
+                      <ChevronDown className={`h-4 w-4 text-zinc-500 transition-transform ${isSortOpen ? "rotate-180" : ""}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {isSortOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 5 }}
+                          className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md"
+                        >
+                          {[
+                            { key: "reviews", label: "Most Reviews" },
+                            { key: "name", label: "Course Name (A-Z)" },
+                            { key: "code", label: "Course Code (A-Z)" },
+                            { key: "grade", label: "Average Grade (A-C)" },
+                          ].map((opt) => (
+                            <button
+                              key={opt.key}
+                              onClick={() => {
+                                setSortOption(opt.key as any);
+                                setIsSortOpen(false);
+                              }}
+                              className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${sortOption === opt.key ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
+                                }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Filter dropdown */}
+                  <div className="relative md:col-span-3 lg:col-span-2">
+                    <button
+                      onClick={() => {
+                        setIsFilterOpen(!isFilterOpen);
+                        setIsSortOpen(false);
+                      }}
+                      className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Filter className="h-4 w-4 text-app-text-secondary/60" />
+                        <span>Filter: {filterDept === "all" ? "All" : filterDept}</span>
+                      </div>
+                      <ChevronDown className={`h-4 w-4 text-app-text-secondary/60 transition-transform ${isFilterOpen ? "rotate-180" : ""}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {isFilterOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 5 }}
+                          className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md max-h-60 overflow-y-auto"
+                        >
+                          {["all", ...distinctDepartments].map((dept) => (
+                            <button
+                              key={dept}
+                              onClick={() => {
+                                setFilterDept(dept);
+                                setIsFilterOpen(false);
+                              }}
+                              className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${filterDept === dept ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
+                                }`}
+                            >
+                              {dept === "all" ? "All Departments" : dept}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
+
+                {/* Course Card Grid results */}
+                {filteredAndSortedCourses.length === 0 ? (
+                  <div className="rounded-3xl border border-app-border bg-app-surface p-16 text-center shadow-sm">
+                    <AlertCircle className="h-10 w-10 text-app-text-secondary/60 mx-auto mb-3.5" />
+                    <p className="text-sm text-app-text-primary font-bold">
+                      No electives matched your criteria
+                    </p>
+                    <p className="text-xs text-app-text-secondary mt-1 max-w-sm mx-auto">
+                      Try clearing search queries or removing average grade filters to browse all electives.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                    {filteredAndSortedCourses.map((course) => {
+                      const courseReviews = reviews.filter((r) => r.courseId === course.id);
+                      return (
+                        <CourseCard
+                          key={course.id}
+                          course={course}
+                          reviewCount={course.reviewCount !== undefined ? course.reviewCount : courseReviews.length}
+                          isBookmarked={bookmarks.includes(course.id) || bookmarks.includes(course.code)}
+                          onToggleBookmark={handleToggleBookmark}
+                          onClick={() => {
+                            setSelectedCourse(course);
+                            setActivePage("course-details");
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* PAGE: Course Details */}
+            {activePage === "course-details" && selectedCourse && (
+              <motion.div
+                key="details-page"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+              >
+                <CourseDetails
+                  course={selectedCourse}
+                  reviews={currentCourseReviews.length > 0 ? currentCourseReviews : reviews.filter((r) => r.courseId === selectedCourse.id)}
+                  isBookmarked={bookmarks.includes(selectedCourse.id) || bookmarks.includes(selectedCourse.code)}
+                  onToggleBookmark={handleToggleBookmarkDirect}
+                  onBack={() => {
+                    setActivePage("browse");
+                  }}
+                  onOpenReviewModal={handleOpenReviewModal}
+                />
+              </motion.div>
+            )}
+
+            {/* PAGE: Submit a Review */}
+            {activePage === "submit-review" && (
+              <motion.div
+                key="submit-page"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+              >
+                <SubmitReview
+                  user={user}
+                  courses={courses}
+                  onSubmitReview={handleAddReview}
+                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                  reviewToEdit={reviewToEdit}
+                  onCancelEdit={() => {
+                    setReviewToEdit(null);
+                    setActivePage("profile");
+                  }}
+                  onProjectsClick={() => {
+                    setSubmitReviewInitialCategory("projects");
+                    setReviewToEdit(null);
+                    setActivePage("submit-review");
+                  }}
+                  onSubmitProject={handleSubmitProject}
+                  projectToEdit={projectToEdit}
+                  onSuccessProjectReturn={() => {
+                    setProjectToEdit(null);
+                    setActivePage(projectToEdit ? "profile" : "projects");
+                  }}
+                  initialCategory={submitReviewInitialCategory}
+                />
+              </motion.div>
+            )}
+
+            {/* PAGE: Bookmarks View */}
+            {activePage === "bookmarks" && (
+              <motion.div
+                key="bookmarks-page"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+              >
+                <BookmarksView
+                  user={user}
+                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                  courses={courses}
+                  bookmarks={bookmarks}
+                  reviews={reviews}
+                  onToggleBookmark={handleToggleBookmark}
+                  onSelectCourse={(course) => {
+                    setSelectedCourse(course);
+                    setActivePage("course-details");
+                  }}
+                  onExploreClick={() => {
+                    setSelectedCategory("HEL");
+                    setActivePage("browse");
+                  }}
+                />
+              </motion.div>
+            )}
+
+            {/* PAGE: Profile View */}
+            {activePage === "profile" && (
+              <motion.div
+                key="profile-page"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+              >
+                <ProfileView
+                  user={user}
+                  reviews={reviews}
+                  courses={courses}
+                  bookmarks={bookmarks}
+                  onSelectCourse={(course) => {
+                    setSelectedCourse(course);
+                    setActivePage("course-details");
+                  }}
+                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                  onDeleteReview={handleDeleteReview}
+                  onEditReview={(review) => {
+                    setReviewToEdit(review);
+                    setProjectToEdit(null);
+                    setActivePage("submit-review");
+                  }}
+                  onDeleteProjectReview={handleDeleteProjectReview}
+                  onEditProjectReview={(project) => {
+                    setProjectToEdit(project);
+                    setReviewToEdit(null);
+                    setSubmitReviewInitialCategory("projects");
+                    setActivePage("submit-review");
+                  }}
+                  projectReviews={userProjectReviews}
+                  currentUserId={currentSupabaseUserId}
+                  onUpdateStudentId={handleUpdateStudentId}
+                />
+              </motion.div>
+            )}
+
+            {/* PAGE: Projects Feed */}
+            {activePage === "projects" && (
+              <motion.div
+                key="projects-page"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+              >
+                <ProjectsView
+                  projects={projects}
+                  user={user}
+                  onAddReviewClick={() => {
+                    setSubmitReviewInitialCategory("projects");
+                    setReviewToEdit(null);
+                    setActivePage("submit-review");
+                  }}
+                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                  onHomeClick={() => setActivePage("home")}
+                  onSelectCategory={(category) => {
+                    setSelectedCategory(category);
+                    setActivePage("browse");
+                  }}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
+
+        {/* Verified Detailed Review Modal Popup */}
+        <ReviewModal
+          isOpen={isReviewModalOpen}
+          onClose={() => setIsReviewModalOpen(false)}
+          review={activeReviewModal}
+          course={selectedCourse}
+          reviewIndex={reviewModalIndex}
+        />
+
+        {/* Confirmation Modal for deleting review or project review */}
+        {(reviewToDeleteId || projectToDeleteId) && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <div className="w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface p-6 shadow-2xl">
+              <h3 className="font-sans text-lg font-bold text-app-text-primary">
+                {projectToDeleteId ? "Delete Project Review" : "Delete Review"}
+              </h3>
+              <p className="mt-3 text-sm leading-relaxed text-app-text-secondary font-sans">
+                Are you sure you want to delete this {projectToDeleteId ? "project review" : "review"}? This action cannot be undone.
+              </p>
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setReviewToDeleteId(null);
+                    setProjectToDeleteId(null);
+                  }}
+                  className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text-primary hover:bg-app-bg transition-colors font-sans"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (projectToDeleteId) {
+                      const id = projectToDeleteId;
+                      setProjectToDeleteId(null);
+                      executeDeleteProjectReview(id);
+                    } else if (reviewToDeleteId) {
+                      const id = reviewToDeleteId;
+                      setReviewToDeleteId(null);
+                      executeDeleteReview(id);
+                    }
+                  }}
+                  className="rounded-xl bg-app-error px-4 py-2 text-sm font-semibold text-white hover:bg-app-error/90 transition-all font-sans"
+                >
+                  Delete
+                </button>
               </div>
-
-              {/* Course Card Grid results */}
-              {filteredAndSortedCourses.length === 0 ? (
-                <div className="rounded-3xl border border-app-border bg-app-surface p-16 text-center shadow-sm">
-                  <AlertCircle className="h-10 w-10 text-app-text-secondary/60 mx-auto mb-3.5" />
-                  <p className="text-sm text-app-text-primary font-bold">
-                    No electives matched your criteria
-                  </p>
-                  <p className="text-xs text-app-text-secondary mt-1 max-w-sm mx-auto">
-                    Try clearing search queries or removing average grade filters to browse all electives.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                  {filteredAndSortedCourses.map((course) => {
-                    const courseReviews = reviews.filter((r) => r.courseId === course.id);
-                    return (
-                      <CourseCard
-                        key={course.id}
-                        course={course}
-                        reviewCount={course.reviewCount !== undefined ? course.reviewCount : courseReviews.length}
-                        isBookmarked={bookmarks.includes(course.id) || bookmarks.includes(course.code)}
-                        onToggleBookmark={handleToggleBookmark}
-                        onClick={() => {
-                          setSelectedCourse(course);
-                          setActivePage("course-details");
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {/* PAGE: Course Details */}
-          {activePage === "course-details" && selectedCourse && (
-            <motion.div
-              key="details-page"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-            >
-              <CourseDetails
-                course={selectedCourse}
-                reviews={currentCourseReviews.length > 0 ? currentCourseReviews : reviews.filter((r) => r.courseId === selectedCourse.id)}
-                isBookmarked={bookmarks.includes(selectedCourse.id) || bookmarks.includes(selectedCourse.code)}
-                onToggleBookmark={handleToggleBookmarkDirect}
-                onBack={() => {
-                  setActivePage("browse");
-                }}
-                onOpenReviewModal={handleOpenReviewModal}
-              />
-            </motion.div>
-          )}
-
-          {/* PAGE: Submit a Review */}
-          {activePage === "submit-review" && (
-            <motion.div
-              key="submit-page"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-            >
-              <SubmitReview
-                user={user}
-                courses={courses}
-                onSubmitReview={handleAddReview}
-                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                reviewToEdit={reviewToEdit}
-                onCancelEdit={() => {
-                  setReviewToEdit(null);
-                  setActivePage("profile");
-                }}
-                onProjectsClick={() => {
-                  setSubmitReviewInitialCategory("projects");
-                  setReviewToEdit(null);
-                  setActivePage("submit-review");
-                }}
-                onSubmitProject={handleSubmitProject}
-                onSuccessProjectReturn={() => setActivePage("projects")}
-                initialCategory={submitReviewInitialCategory}
-              />
-            </motion.div>
-          )}
-
-          {/* PAGE: Bookmarks View */}
-          {activePage === "bookmarks" && (
-            <motion.div
-              key="bookmarks-page"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-            >
-              <BookmarksView
-                user={user}
-                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                courses={courses}
-                bookmarks={bookmarks}
-                reviews={reviews}
-                onToggleBookmark={handleToggleBookmark}
-                onSelectCourse={(course) => {
-                  setSelectedCourse(course);
-                  setActivePage("course-details");
-                }}
-                onExploreClick={() => {
-                  setSelectedCategory("HEL");
-                  setActivePage("browse");
-                }}
-              />
-            </motion.div>
-          )}
-
-          {/* PAGE: Profile View */}
-          {activePage === "profile" && (
-            <motion.div
-              key="profile-page"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-            >
-              <ProfileView
-                user={user}
-                reviews={reviews}
-                courses={courses}
-                bookmarks={bookmarks}
-                onSelectCourse={(course) => {
-                  setSelectedCourse(course);
-                  setActivePage("course-details");
-                }}
-                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                onDeleteReview={handleDeleteReview}
-                onEditReview={(review) => {
-                  setReviewToEdit(review);
-                  setActivePage("submit-review");
-                }}
-                onUpdateStudentId={handleUpdateStudentId}
-              />
-            </motion.div>
-          )}
-
-          {/* PAGE: Projects Feed */}
-          {activePage === "projects" && (
-            <motion.div
-              key="projects-page"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-            >
-              <ProjectsView
-                projects={projects}
-                user={user}
-                onAddReviewClick={() => {
-                  setSubmitReviewInitialCategory("projects");
-                  setReviewToEdit(null);
-                  setActivePage("submit-review");
-                }}
-                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                onHomeClick={() => setActivePage("home")}
-                onSelectCategory={(category) => {
-                  setSelectedCategory(category);
-                  setActivePage("browse");
-                }}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </main>
-
-      {/* Verified Detailed Review Modal Popup */}
-      <ReviewModal
-        isOpen={isReviewModalOpen}
-        onClose={() => setIsReviewModalOpen(false)}
-        review={activeReviewModal}
-        course={selectedCourse}
-        reviewIndex={reviewModalIndex}
-      />
-
-      {/* Confirmation Modal for deleting review */}
-      {reviewToDeleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface p-6 shadow-2xl">
-            <h3 className="font-sans text-lg font-bold text-app-text-primary">
-              Delete Review
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-app-text-secondary font-sans">
-              Are you sure you want to delete this review? This action cannot be undone.
-            </p>
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setReviewToDeleteId(null)}
-                className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text-primary hover:bg-app-bg transition-colors font-sans"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const id = reviewToDeleteId;
-                  setReviewToDeleteId(null);
-                  executeDeleteReview(id);
-                }}
-                className="rounded-xl bg-app-error px-4 py-2 text-sm font-semibold text-white hover:bg-app-error/90 transition-all font-sans"
-              >
-                Delete
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Simple Footer */}
-      <footer className="border-t border-app-border bg-app-surface py-6 text-center text-xs text-app-text-secondary">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span>BITS Course Reviews • Created for the BITSian community</span>
-          <div className="flex gap-4">
-            <button onClick={() => { setSelectedCategory("HEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse HELs</button>
-            <span>•</span>
-            <button onClick={() => { setSelectedCategory("OPEL_DEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse DELs</button>
-            <span>•</span>
-            <button onClick={() => { setReviewToEdit(null); setActivePage("submit-review"); }} className="hover:text-app-text-primary transition-colors">Write a Review</button>
+        {/* Simple Footer */}
+        <footer className="border-t border-app-border bg-app-surface py-6 text-center text-xs text-app-text-secondary">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <span>BITS Course Reviews • Created for the BITSian community</span>
+            <div className="flex gap-4">
+              <button onClick={() => { setSelectedCategory("HEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse HELs</button>
+              <span>•</span>
+              <button onClick={() => { setSelectedCategory("OPEL_DEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse DELs</button>
+              <span>•</span>
+              <button onClick={() => { setReviewToEdit(null); setActivePage("submit-review"); }} className="hover:text-app-text-primary transition-colors">Write a Review</button>
+            </div>
           </div>
-        </div>
-      </footer>
+        </footer>
 
-      {/* Scroll to Top Button */}
-      {(activePage === "browse" || activePage === "projects" || activePage === "course-details") && (
-        <ScrollToTop />
-      )}
-    </div>
+        {/* Scroll to Top Button */}
+        {(activePage === "browse" || activePage === "projects" || activePage === "course-details") && (
+          <ScrollToTop />
+        )}
+      </div>
     </BookmarkCountsContext.Provider>
   );
 }

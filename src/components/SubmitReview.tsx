@@ -6,7 +6,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { BookOpen, GraduationCap, CheckCircle2, ArrowRight, ArrowLeft, Send, Sparkles, AlertCircle, Search, X, ChevronDown, Check, FolderGit2 } from "lucide-react";
-import { Course, Review, User } from "../types";
+import { Course, Review, User, Project } from "../types";
 
 const semesterOptions = [
   "2nd Semester 2025-2026",
@@ -27,9 +27,10 @@ interface SubmitReviewProps {
   reviewToEdit?: Review | null;
   onCancelEdit?: () => void;
   onProjectsClick?: () => void;
-  onSubmitProject?: (projectData: Omit<any, "id" | "created_at">) => Promise<boolean>;
+  onSubmitProject?: (projectData: Omit<any, "id" | "created_at">, projectToEdit?: Project | null) => Promise<boolean>;
   onSuccessProjectReturn?: () => void;
   initialCategory?: "HEL" | "OPEL_DEL" | "projects";
+  projectToEdit?: Project | null;
 }
 
 export default function SubmitReview({
@@ -43,6 +44,7 @@ export default function SubmitReview({
   onSubmitProject,
   onSuccessProjectReturn,
   initialCategory,
+  projectToEdit = null,
 }: SubmitReviewProps) {
   // Multistep forms
   const [step, setStep] = useState(1);
@@ -145,6 +147,25 @@ export default function SubmitReview({
       setSuccess(false);
     }
   }, [reviewToEdit, courses, initialCategory]);
+
+  // Effect to pre-fill project form when editing a project review
+  React.useEffect(() => {
+    if (projectToEdit) {
+      setCategory("projects");
+      setProjectTitle(projectToEdit.project_title || "");
+      setProfName(projectToEdit.prof_name || "");
+      setProfBranch(projectToEdit.prof_branch || "");
+      setStudentBranch(projectToEdit.student_branch || "");
+      setProjectType(projectToEdit.type || "SOP");
+      setDomain(projectToEdit.domain || "");
+      setTakenIn(semesterOptions.includes(projectToEdit.taken_in) ? projectToEdit.taken_in : semesterOptions[0]);
+      setProjectInfo(projectToEdit.project_info || "");
+      setExperience(projectToEdit.experience || "");
+      setStep(1);
+      setSuccess(false);
+      setError("");
+    }
+  }, [projectToEdit]);
 
   // Filter courses based on category
   const filteredCourses = courses.filter((c) => {
@@ -320,7 +341,7 @@ export default function SubmitReview({
           experience: experience.trim(),
         };
         if (onSubmitProject) {
-          const completed = await onSubmitProject(projectData);
+          const completed = await onSubmitProject(projectData, projectToEdit);
           if (completed) {
             setSuccess(true);
           } else {
