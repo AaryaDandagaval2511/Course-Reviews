@@ -110,6 +110,14 @@ export default function ProjectsView({
 
   const projectTypesList = ["SOP", "LOP", "DOP", "RC"];
 
+  const hasActiveFilters = Boolean(
+    searchQuery.trim() ||
+    filterDomain !== "all" ||
+    filterDept !== "all" ||
+    filterBranch !== "all" ||
+    filterType !== "all"
+  );
+
   // Handle Search, Filter, and Sort
   const filteredAndSortedProjects = useMemo(() => {
     let result = [...projects];
@@ -583,12 +591,16 @@ export default function ProjectsView({
         <div className="rounded-3xl border border-app-border bg-app-surface p-16 text-center shadow-sm max-w-xl mx-auto space-y-3">
           <FolderGit2 className="h-10 w-10 text-app-text-secondary/60 mx-auto mb-3.5" />
           <p className="text-sm text-app-text-primary font-bold">
-            No projects matched your criteria
+            {projects.length === 0 && !hasActiveFilters
+              ? "No project reviews yet. Be the first to submit one."
+              : "No projects matched your criteria"}
           </p>
           <p className="text-xs text-app-text-secondary mt-1 max-w-sm mx-auto leading-relaxed">
-            Try clearing search queries, adjusting supervisor department or student branch filters to view BITSian projects.
+            {projects.length === 0 && !hasActiveFilters
+              ? "There are no project reviews in the community feed yet. Share your experience to help other BITSians."
+              : "Try clearing search queries, adjusting supervisor department or student branch filters to view BITSian projects."}
           </p>
-          {(searchQuery || filterDept !== "all" || filterBranch !== "all" || filterDomain !== "all" || filterType !== "all") && (
+          {hasActiveFilters && (
             <button
               onClick={() => {
                 setSearchQuery("");

@@ -8,6 +8,17 @@ import { motion, AnimatePresence } from "motion/react";
 import { BookOpen, GraduationCap, CheckCircle2, ArrowRight, ArrowLeft, Send, Sparkles, AlertCircle, Search, X, ChevronDown, Check, FolderGit2 } from "lucide-react";
 import { Course, Review, User } from "../types";
 
+const semesterOptions = [
+  "2nd Semester 2025-2026",
+  "1st Semester 2025-2026",
+  "2nd Semester 2024-2025",
+  "1st Semester 2024-2025",
+  "2nd Semester 2023-2024",
+  "1st Semester 2023-2024",
+  "2nd Semester 2022-2023",
+  "1st Semester 2022-2023",
+];
+
 interface SubmitReviewProps {
   user: User | null;
   courses: Course[];
@@ -44,7 +55,7 @@ export default function SubmitReview({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [icForSemester, setIcForSemester] = useState("");
 
-  const [semester, setSemester] = useState("First Semester 2024-2025");
+  const [semester, setSemester] = useState(semesterOptions[0]);
   const [gradeReceived, setGradeReceived] = useState("A");
   const [marksReceived, setMarksReceived] = useState("");
   const [avMarks, setAvMarks] = useState("");
@@ -70,7 +81,7 @@ export default function SubmitReview({
   const [studentBranch, setStudentBranch] = useState("");
   const [projectType, setProjectType] = useState("SOP");
   const [domain, setDomain] = useState("");
-  const [takenIn, setTakenIn] = useState("First Semester 2025-2026");
+  const [takenIn, setTakenIn] = useState(semesterOptions[0]);
   const [projectInfo, setProjectInfo] = useState("");
   const [experience, setExperience] = useState("");
   const [isSubmittingProject, setIsSubmittingProject] = useState(false);
@@ -91,7 +102,7 @@ export default function SubmitReview({
       }
       setSelectedCourseId(reviewToEdit.courseId);
       setIcForSemester(reviewToEdit.icForSemester || "");
-      setSemester(reviewToEdit.semester);
+      setSemester(semesterOptions.includes(reviewToEdit.semester) ? reviewToEdit.semester : semesterOptions[0]);
       setGradeReceived(reviewToEdit.gradeReceived);
       setMarksReceived(reviewToEdit.marksReceived);
       setAvMarks(reviewToEdit.avMarks || "");
@@ -114,7 +125,7 @@ export default function SubmitReview({
       setSelectedCourseId("");
       setSearchQuery("");
       setIcForSemester("");
-      setSemester("First Semester 2024-2025");
+      setSemester(semesterOptions[0]);
       setGradeReceived("A");
       setMarksReceived("");
       setAvMarks("");
@@ -149,23 +160,7 @@ export default function SubmitReview({
     );
   });
 
-  const semestersList = [
-    "First Semester 2025-2026",
-    "Second Semester 2024-2025",
-    "First Semester 2024-2025",
-    "Second Semester 2023-2024",
-    "First Semester 2023-2024",
-  ];
-
-  const semestersListProjects = [
-    "First Semester 2025-2026",
-    "Second Semester 2024-2025",
-    "First Semester 2024-2025",
-    "Second Semester 2023-2024",
-    "First Semester 2023-2024",
-    "Second Semester 2022-2023",
-    "First Semester 2022-2023",
-  ];
+  const semestersList = semesterOptions;
 
   const branchesAndDeptsListProjects = [
     "B.E. Chemical",
@@ -783,7 +778,7 @@ export default function SubmitReview({
                       onChange={(e) => setTakenIn(e.target.value)}
                       className="w-full rounded-xl border border-app-border bg-app-bg px-3.5 py-2.5 text-sm text-app-text-primary shadow-sm focus:border-app-accent focus:outline-none font-sans"
                     >
-                      {semestersListProjects.map((sem) => (
+                      {semesterOptions.map((sem) => (
                         <option key={sem} value={sem}>
                           {sem}
                         </option>
@@ -941,7 +936,7 @@ export default function SubmitReview({
                     onChange={(e) => setSemester(e.target.value)}
                     className="w-full rounded-xl border border-app-border bg-app-bg px-3.5 py-2.5 text-sm font-medium text-app-text-primary shadow-sm focus:border-app-accent focus:outline-none font-sans"
                   >
-                    {semestersList.map((sem) => (
+                    {semesterOptions.map((sem) => (
                       <option key={sem} value={sem} className="bg-app-bg text-app-text-primary">
                         {sem}
                       </option>

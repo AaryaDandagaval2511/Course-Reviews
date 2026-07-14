@@ -222,10 +222,7 @@ export default function App() {
     return savedBookmarks ? JSON.parse(savedBookmarks) : ["HSS_F368", "HSS_F391"]; // Default preset bookmarks
   });
 
-  const [projects, setProjects] = useState<Project[]>(() => {
-    const savedProjects = localStorage.getItem("bits_projects");
-    return savedProjects ? JSON.parse(savedProjects) : [];
-  });
+  const [projects, setProjects] = useState<Project[]>([]);
 
   // Supabase Course Details states
   const [currentCourseReviews, setCurrentCourseReviews] = useState<Review[]>([]);
@@ -337,11 +334,14 @@ export default function App() {
         // Fetch projects from Supabase
         try {
           const { data, error } = await supabase.from("projects").select("*");
-          if (!error && data && data.length > 0) {
-            setProjects(data);
+          if (!error && data) {
+            setProjects(data || []);
+          } else {
+            setProjects([]);
           }
         } catch (e) {
           console.warn("Error fetching projects from Supabase:", e);
+          setProjects([]);
         }
 
         const reviewCounts: Record<string, number> = {};
