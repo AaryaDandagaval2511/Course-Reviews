@@ -313,7 +313,6 @@ export default function SubmitReview({
           prof_name: profName.trim().toUpperCase(),
           prof_branch: profBranch,
           student_branch: studentBranch,
-          project_type: projectType,
           domain: domain,
           type: projectType,
           taken_in: takenIn,

@@ -147,9 +147,9 @@ export default function ProjectsView({
       result = result.filter((p) => p.student_branch === filterBranch);
     }
 
-    // Filter by Project Type (Match against type, fallback to project_type)
+    // Filter by Project Type
     if (filterType !== "all") {
-      result = result.filter((p) => (p.type === filterType || p.project_type === filterType));
+      result = result.filter((p) => p.type === filterType);
     }
 
     // Sorting options: Latest, Oldest, Professor Name, Project Title
@@ -268,10 +268,10 @@ export default function ProjectsView({
           {/* Project Type / Submitted Date */}
           <div className="rounded-2xl border border-app-border bg-app-surface p-5 flex flex-col justify-between shadow-sm">
             <span className="text-[10px] font-bold text-app-text-secondary uppercase tracking-wider font-mono">
-              {(selectedProject.type || selectedProject.project_type) ? "Project Type" : "Submitted Date"}
+              {selectedProject.type ? "Project Type" : "Submitted Date"}
             </span>
             <div className="mt-2 text-sm sm:text-base font-black text-app-text-primary font-sans leading-tight">
-              {(selectedProject.type || selectedProject.project_type) || (selectedProject.created_at ? (
+              {selectedProject.type || (selectedProject.created_at ? (
                 new Date(selectedProject.created_at).toLocaleDateString("en-US", {
                   year: "numeric",
                   month: "short",
@@ -633,9 +633,9 @@ export default function ProjectsView({
                     {project.taken_in}
                   </span>
                   <div className="flex gap-1.5 items-center shrink-0">
-                    {(project.type || project.project_type) && (
+                    {project.type && (
                       <span className="bg-app-accent/10 px-2 py-0.5 rounded text-[10px] font-bold font-mono text-app-accent border border-app-accent/20">
-                        {project.type || project.project_type}
+                        {project.type}
                       </span>
                     )}
                     <span className="bg-app-bg px-2 py-0.5 rounded text-[10px] font-bold font-mono text-app-text-secondary border border-app-border max-w-[120px] truncate">

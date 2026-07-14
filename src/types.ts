@@ -59,7 +59,6 @@ export interface Project {
   project_info: string;
   student_branch: string;
   prof_branch: string;
-  project_type?: string;
   domain?: string;
   type?: string;
   taken_in: string;
