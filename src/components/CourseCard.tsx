@@ -7,7 +7,8 @@ import React from "react";
 import { motion } from "motion/react";
 import { MessageSquare, Bookmark, User } from "lucide-react";
 import { Course } from "../types";
-import { getBookmarkCount } from "../data";
+import { useContext } from "react";
+import { BookmarkCountsContext } from "../App";
 
 interface CourseCardProps {
   key?: React.Key;
@@ -18,7 +19,6 @@ interface CourseCardProps {
   onClick: () => void;
 }
 
-
 export default function CourseCard({
   course,
   reviewCount,
@@ -26,6 +26,7 @@ export default function CourseCard({
   onToggleBookmark,
   onClick,
 }: CourseCardProps) {
+  const { bookmarkCounts } = useContext(BookmarkCountsContext);
   return (
     <motion.div
       whileHover={{ y: -4 }}
@@ -80,7 +81,7 @@ export default function CourseCard({
           <div className="flex items-center gap-1 text-app-text-secondary/70" title="Saved bookmarks count">
             <Bookmark className="h-3.5 w-3.5 text-app-text-secondary/60" />
             <span className="font-mono text-[11px] font-normal">
-              {getBookmarkCount(course.id, isBookmarked, course.bookmarkCount)}
+                             {bookmarkCounts[course.code] || 0}
             </span>
           </div>
         </div>

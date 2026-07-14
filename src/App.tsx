@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { createContext, useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
+
+export const BookmarkCountsContext = createContext<{ bookmarkCounts: Record<string, number> }>({ bookmarkCounts: {} });
 import { Search, ChevronDown, Filter, SlidersHorizontal, BookOpen, Compass, AlertCircle, Heart } from "lucide-react";
 import { Course, Review, User, Page, Project } from "./types";
 import { supabase } from "./supabaseClient";
@@ -124,6 +126,9 @@ export default function App() {
     return savedBookmarks ? JSON.parse(savedBookmarks) : ["HSS_F368", "HSS_F391"]; // Default preset bookmarks
   });
 
+  // State for global bookmark counts per course_code
+  const [bookmarkCounts, setBookmarkCounts] = useState<Record<string, number>>({});
+
   const [projects, setProjects] = useState<Project[]>([]);
 
   // Supabase Course Details states
@@ -209,13 +214,19 @@ export default function App() {
           console.warn("Error fetching OPEL/DEL reviews from Supabase:", e);
         }
 
-        // Fetch bookmarks for counts
+        // Fetch bookmarks for counts — single query, all rows
         let dbBookmarks: any[] = [];
         try {
           const { data, error } = await supabase.from("bookmarks").select("course_code");
-          if (!error && data) dbBookmarks = data;
+          console.log("[BookmarkCounts] Supabase response:", { data, error });
+          if (error) {
+            console.error("[BookmarkCounts] Fetch error:", error.message, error.details || "", error.hint || "");
+          } else if (data) {
+            dbBookmarks = data;
+            console.log("[BookmarkCounts] Raw rows fetched:", data.length, data);
+          }
         } catch (e) {
-          console.warn("Error fetching bookmarks from Supabase:", e);
+          console.error("[BookmarkCounts] Unexpected error fetching bookmarks:", e);
         }
 
         // Fetch del_d mappings
@@ -258,12 +269,14 @@ export default function App() {
           }
         });
 
-        const bookmarkCounts: Record<string, number> = {};
+        const tempBookmarkCounts: Record<string, number> = {};
         dbBookmarks.forEach((b) => {
           if (b.course_code) {
-            bookmarkCounts[b.course_code] = (bookmarkCounts[b.course_code] || 0) + 1;
+            tempBookmarkCounts[b.course_code] = (tempBookmarkCounts[b.course_code] || 0) + 1;
           }
         });
+        console.log("[BookmarkCounts] Built course_code→count map:", tempBookmarkCounts);
+        setBookmarkCounts(tempBookmarkCounts);
 
         const mappedHelCourses: Course[] = dbCourses.map((c) => {
           const code = c.course_code || "";
@@ -279,7 +292,7 @@ export default function App() {
             courseTotal: c.course_total ? String(c.course_total) : undefined,
             courseHandoutUrl: c.course_handout || undefined,
             description: c.info || "",
-            bookmarkCount: bookmarkCounts[code] || 0,
+            bookmarkCount: tempBookmarkCounts[code] || 0,
             reviewCount: reviewCounts[code] || 0,
             dept: dept || code.split(" ")[0],
             nickname: c.nickname || "",
@@ -300,7 +313,7 @@ export default function App() {
             courseTotal: c.course_total ? String(c.course_total) : undefined,
             courseHandoutUrl: c.course_handout || undefined,
             description: c.info || "",
-            bookmarkCount: bookmarkCounts[code] || 0,
+            bookmarkCount: tempBookmarkCounts[code] || 0,
             reviewCount: reviewCounts[code] || 0,
             dept: dept || code.split(" ")[0],
             nickname: c.nickname || "",
@@ -772,6 +785,7 @@ export default function App() {
                 : c
             )
           );
+          setBookmarkCounts((prev) => ({ ...prev, [code]: count }));
         }
       } catch (countErr) {
         console.warn("Error fetching count in background:", countErr);
@@ -1535,6 +1549,7 @@ export default function App() {
   }
 
   return (
+    <BookmarkCountsContext.Provider value={{ bookmarkCounts }}>
     <div className="min-h-screen bg-app-bg text-app-text-primary flex flex-col font-sans transition-colors duration-200">
       {/* Main Header */}
       <Header
@@ -2023,5 +2038,6 @@ export default function App() {
         <ScrollToTop />
       )}
     </div>
+    </BookmarkCountsContext.Provider>
   );
 }

@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useContext } from "react";
 import { motion } from "motion/react";
 import { ArrowLeft, Bookmark, FileText, MessageSquare } from "lucide-react";
 import { Course, Review } from "../types";
 import ReviewCard from "./ReviewCard";
-import { getBookmarkCount } from "../data";
+import { BookmarkCountsContext } from "../App";
 
 interface CourseDetailsProps {
   course: Course;
@@ -28,6 +28,7 @@ export default function CourseDetails({
   onOpenReviewModal,
 }: CourseDetailsProps) {
   const [downloading, setDownloading] = useState(false);
+  const { bookmarkCounts } = useContext(BookmarkCountsContext);
 
   const handleDownloadHandout = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -100,7 +101,7 @@ export default function CourseDetails({
               <div className="flex items-center gap-1.5 text-app-text-secondary/60 text-[11px] font-medium pl-1" title="Saved bookmarks count">
                 <Bookmark className="h-3.5 w-3.5 text-app-text-secondary/50" />
                 <span>
-                  Saved by <span className="font-mono font-semibold text-app-text-secondary">{getBookmarkCount(course.id, isBookmarked, course.bookmarkCount)}</span> students
+                  Saved by <span className="font-mono font-semibold text-app-text-secondary">{bookmarkCounts[course.code] || 0}</span> students
                 </span>
               </div>
             </div>
