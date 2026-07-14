@@ -1,0 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --background: #F4F4F5;
+  --surface: #FFFFFF;
+  --border: #E4E4E7;
+  --text-primary: #111111;
+  --text-secondary: #5F6368;
+  --accent: #5B3A78;
+  --accent-hover: #4B3065;
+  --success: #0F766E;
+  --warning: #D97706;
+  --error: #DC2626;
+}
+
+.dark {
+  --background: #0D0D12;
+  --surface: #17171D;
+  --border: #2A2A33;
+  --text-primary: #FAFAFA;
+  --text-secondary: #A1A1AA;
+  --accent: #6C4A93;
+  --accent-hover: #7A57A5;
+  --success: #0F766E;
+  --warning: #D97706;
+  --error: #DC2626;
+}
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-app-bg: var(--background);
+  --color-app-surface: var(--surface);
+  --color-app-border: var(--border);
+  --color-app-text-primary: var(--text-primary);
+  --color-app-text-secondary: var(--text-secondary);
+  --color-app-accent: var(--accent);
+  --color-app-accent-hover: var(--accent-hover);
+  --color-app-success: var(--success);
+  --color-app-warning: var(--warning);
+  --color-app-error: var(--error);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+

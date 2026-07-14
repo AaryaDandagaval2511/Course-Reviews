@@ -1,0 +1,6 @@
+{
+  "name": "BITS Course Reviews",
+  "description": "A polished, modern portal for course reviews, grade distributions, and electives overview at BITS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
