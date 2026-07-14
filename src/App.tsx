@@ -48,101 +48,31 @@ function getBitsIdAndName(email: string, fullName?: string) {
   return { idNo, name };
 }
 
-// Helper to get a deterministic UUID from any email string (ensures mock/local logins get valid Postgres UUIDs)
-function getUuidFromEmail(email: string): string {
-  let hash = 0;
-  for (let i = 0; i < email.length; i++) {
-    const char = email.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32bit integer
+// Helper to create the authenticated user object from the current Supabase session.
+function getAuthenticatedUserFromSession(session: { user?: { email?: string | null; user_metadata?: { full_name?: string } } } | null): User | null {
+  const email = session?.user?.email?.toLowerCase();
+  if (!email || !email.endsWith("@goa.bits-pilani.ac.in")) {
+    return null;
   }
-  const hex = Math.abs(hash).toString(16).padEnd(8, "0");
-  return `${hex}-0000-4000-8000-000000000000`;
+
+  const { name } = getBitsIdAndName(email, session?.user?.user_metadata?.full_name);
+  const savedId = localStorage.getItem("student_id_" + email);
+  return {
+    email,
+    name,
+    campus: "Goa",
+    idNo: savedId || "-",
+  };
 }
 
-// Helper to map BITSian emails to universally valid domains for Supabase GoTrue Auth
-function mapEmailForSupabase(email: string): string {
-  if (!email) return "";
-  const lower = email.toLowerCase().trim();
-  if (lower.includes("@") && (lower.endsWith(".bits-pilani.ac.in") || lower.endsWith(".ac.in"))) {
-    const parts = lower.split("@");
-    const username = parts[0];
-    const domain = parts[1];
-    
-    // Extract first domain segment (e.g., 'goa', 'pilani', 'hyderabad', etc.)
-    const firstSegment = domain.split(".")[0];
-    // If it's just bits-pilani, use 'bits'
-    const suffix = firstSegment === "bits-pilani" ? "bits" : firstSegment;
-    
-    // Keep only letters, numbers, dots, and underscores for maximum email regex safety
-    const safeUsername = username.replace(/[^a-z0-9._]/g, "");
-    
-    return `${safeUsername}_${suffix}@gmail.com`;
-  }
-  return lower;
-}
-
-// Helper to ensure a valid Supabase Auth session exists for the user.
-async function ensureSupabaseSession(email?: string, name?: string): Promise<string | null> {
+async function getSupabaseUserId(): Promise<string | null> {
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (sessionData.session?.user?.id) {
-      return sessionData.session.user.id;
-    }
-
-    if (email) {
-      const supabaseEmail = mapEmailForSupabase(email);
-      const defaultPassword = "MockPassword123!";
-
-      console.log("ensureSupabaseSession: establishing background session for", supabaseEmail);
-      try {
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-          email: supabaseEmail,
-          password: defaultPassword,
-        });
-
-        if (signInData?.user?.id) {
-          return signInData.user.id;
-        }
-
-        if (signInError) {
-          console.log("ensureSupabaseSession: background sign in failed, attempting background sign up...");
-          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-            email: supabaseEmail,
-            password: defaultPassword,
-            options: {
-              data: {
-                full_name: name || "Student BITSian",
-              }
-            }
-          });
-
-          if (signUpData?.user?.id) {
-            try {
-              const { data: reSignInData } = await supabase.auth.signInWithPassword({
-                email: supabaseEmail,
-                password: defaultPassword,
-              });
-              if (reSignInData?.user?.id) {
-                return reSignInData.user.id;
-              }
-            } catch (reSignInErr) {
-              console.warn("ensureSupabaseSession: re-signin threw error, returning signup user id", reSignInErr);
-            }
-            return signUpData.user.id;
-          } else if (signUpError) {
-            console.error("ensureSupabaseSession: background signUp failed:", signUpError.message);
-          }
-        }
-      } catch (authErr: any) {
-        console.warn("ensureSupabaseSession: Supabase authentication threw error (e.g. offline/network issue). Falling back to deterministic UUID.", authErr.message || authErr);
-        return getUuidFromEmail(email);
-      }
-    }
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.user?.id ?? null;
   } catch (err) {
-    console.error("Error in ensureSupabaseSession helper:", err);
+    console.warn("Failed to read Supabase session user id:", err);
+    return null;
   }
-  return email ? getUuidFromEmail(email) : null;
 }
 
 export default function App() {
@@ -168,36 +98,8 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<"HEL" | "OPEL_DEL" | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
 
-  // Authentication State (Preset Aarya Dan with valid Goa email for a full-featured start)
-  const [user, setUser] = useState<User | null>(() => {
-    const isLoggedOut = localStorage.getItem("bits_user_logged_out") === "true";
-    if (isLoggedOut) {
-      return null;
-    }
-    const savedUser = localStorage.getItem("bits_user");
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        if (parsed.campus !== "Goa") {
-          parsed.campus = "Goa";
-        }
-        const savedId = localStorage.getItem("student_id_" + parsed.email);
-        parsed.idNo = savedId || "-";
-        localStorage.setItem("bits_user", JSON.stringify(parsed));
-        return parsed;
-      } catch (e) {
-        return null;
-      }
-    }
-    const defaultEmail = "aarya.dan@goa.bits-pilani.ac.in";
-    const savedId = localStorage.getItem("student_id_" + defaultEmail);
-    return {
-      email: defaultEmail,
-      name: "Aarya Dan",
-      campus: "Goa",
-      idNo: savedId || "-",
-    };
-  });
+  // Authentication State
+  const [user, setUser] = useState<User | null>(null);
 
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -422,7 +324,7 @@ export default function App() {
     const loadUserBookmarks = async () => {
       if (!user) return;
       try {
-        const supabaseUserId = await ensureSupabaseSession(user.email, user.name);
+        const supabaseUserId = await getSupabaseUserId();
         if (!supabaseUserId) {
           console.error("Could not obtain a valid Supabase user ID for bookmarks loading.");
           const localSaved = localStorage.getItem(`bookmarks_${user.email}`);
@@ -468,7 +370,7 @@ export default function App() {
     const loadUserReviews = async () => {
       if (!user) return;
       try {
-        const supabaseUserId = await ensureSupabaseSession(user.email, user.name);
+        const supabaseUserId = await getSupabaseUserId();
         if (!supabaseUserId) {
           console.error("Could not obtain a valid Supabase user ID for reviews loading.");
           return;
@@ -643,7 +545,7 @@ export default function App() {
           let supabaseUserId: string | null = null;
           if (user) {
             try {
-              supabaseUserId = await ensureSupabaseSession(user.email, user.name);
+              supabaseUserId = await getSupabaseUserId();
             } catch (e) {
               console.warn("Could not retrieve Supabase session:", e);
             }
@@ -738,7 +640,7 @@ export default function App() {
         }
 
         if (!supabaseUserId) {
-          supabaseUserId = await ensureSupabaseSession(user.email, user.name);
+          supabaseUserId = await getSupabaseUserId();
         }
 
         if (supabaseUserId) {
@@ -812,7 +714,7 @@ export default function App() {
 
     // --- 2. ASYNC DATABASE OPERATION (IN BACKGROUND) ---
     try {
-      const supabaseUserId = await ensureSupabaseSession(user.email, user.name);
+      const supabaseUserId = await getSupabaseUserId();
       if (!supabaseUserId) {
         console.error("Authentication expired or failed to establish Supabase session.");
         setLoginError("Authentication session expired. Please sign in again.");
@@ -887,79 +789,45 @@ export default function App() {
     const updatedUser = { ...user, idNo: newIdNo };
     setUser(updatedUser);
     localStorage.setItem("student_id_" + user.email, newIdNo);
-    localStorage.setItem("bits_user", JSON.stringify(updatedUser));
   };
-
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem("bits_user", JSON.stringify(user));
-      localStorage.removeItem("bits_user_logged_out");
-    } else {
-      localStorage.removeItem("bits_user");
-    }
-  }, [user]);
 
   // Load initial session and set up onAuthStateChange
   useEffect(() => {
-    const initAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const email = session.user.email || "";
-        const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in");
-        if (!isAllowed) {
-          // Immediately sign out disallowed accounts
+    const syncUserFromSession = async (session: any) => {
+      const authenticatedUser = getAuthenticatedUserFromSession(session);
+      if (authenticatedUser) {
+        setUser(authenticatedUser);
+        setLoginError("");
+        setShowLoginModal(false);
+      } else {
+        setUser(null);
+        if (session?.user) {
           try {
             await supabase.auth.signOut();
           } catch (e) {
             console.warn("Failed to sign out disallowed user:", e);
           }
-          setUser(null);
           setLoginError("Access restricted: please sign in with your @goa.bits-pilani.ac.in address.");
           setShowLoginModal(true);
-          return;
         }
-        const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
-        const savedId = localStorage.getItem("student_id_" + email);
-        setUser({
-          email,
-          name,
-          campus: "Goa",
-          idNo: savedId || "-",
-        });
       }
     };
+
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      await syncUserFromSession(session);
+    };
+
     initAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        const email = session.user.email || "";
-        const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in");
-        if (!isAllowed) {
-          try {
-            await supabase.auth.signOut();
-          } catch (e) {
-            console.warn("Failed to sign out disallowed user on auth change:", e);
-          }
-          setUser(null);
-          setLoginError("Access restricted: please sign in with your @goa.bits-pilani.ac.in address.");
-          setShowLoginModal(true);
-          return;
-        }
-        const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
-        const savedId = localStorage.getItem("student_id_" + email);
-        setUser({
-          email,
-          name,
-          campus: "Goa",
-          idNo: savedId || "-",
-        });
-      } else {
-        if (event === "SIGNED_OUT") {
-          setUser(null);
-          localStorage.setItem("bits_user_logged_out", "true");
-          localStorage.removeItem("bits_user");
-        }
+      if (event === "SIGNED_OUT" || !session?.user) {
+        setUser(null);
+        setLoginError("");
+        return;
       }
+
+      await syncUserFromSession(session);
     });
 
     return () => {
@@ -977,26 +845,16 @@ export default function App() {
       }
       if (event.data?.type === "SUPABASE_AUTH_SUCCESS") {
         supabase.auth.getSession().then(({ data: { session } }) => {
-          if (session?.user) {
-            const email = session.user.email || "";
-            const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in");
-            if (!isAllowed) {
-              supabase.auth.signOut();
-              setUser(null);
-              setLoginError("Access is restricted to @goa.bits-pilani.ac.in email addresses.");
-              setShowLoginModal(true);
-            } else {
-              const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
-              const savedId = localStorage.getItem("student_id_" + email);
-              setUser({
-                email,
-                name,
-                campus: "Goa",
-                idNo: savedId || "-",
-              });
-              setLoginError("");
-              setShowLoginModal(false);
-            }
+          const authenticatedUser = getAuthenticatedUserFromSession(session);
+          if (authenticatedUser) {
+            setUser(authenticatedUser);
+            setLoginError("");
+            setShowLoginModal(false);
+          } else {
+            supabase.auth.signOut();
+            setUser(null);
+            setLoginError("Access is restricted to @goa.bits-pilani.ac.in email addresses.");
+            setShowLoginModal(true);
           }
         });
       }
@@ -1071,7 +929,7 @@ export default function App() {
     let supabaseUserId: string | null = null;
     if (user) {
       try {
-        supabaseUserId = await ensureSupabaseSession(user.email, user.name);
+        supabaseUserId = await getSupabaseUserId();
       } catch (authErr) {
         console.warn("Could not ensure Supabase session on delete:", authErr);
       }
@@ -1642,13 +1500,35 @@ export default function App() {
     }
   }, [selectedCategory, filterDept, delDMappings, courses, searchQuery]);
 
-  if (window.location.pathname === "/auth-callback" || window.location.pathname === "/auth-callback/") {
+  const isAuthCallbackRoute = window.location.pathname === "/auth-callback" || window.location.pathname === "/auth-callback/";
+
+  if (isAuthCallbackRoute) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-app-bg text-app-text-primary">
         <div className="text-center p-8 space-y-4 rounded-3xl border border-app-border bg-app-surface shadow-lg max-w-sm mx-4">
           <div className="animate-spin h-8 w-8 border-4 border-app-accent border-t-transparent rounded-full mx-auto" />
           <h2 className="text-sm font-bold font-sans">Completing BITS SSO...</h2>
           <p className="text-xs text-app-text-secondary">Please wait while we verify your credentials.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-app-bg text-app-text-primary flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md">
+          <LoginView
+            parentError={loginError}
+            onLoginSuccess={() => {
+              setLoginError("");
+              setShowLoginModal(false);
+            }}
+            onClose={() => {
+              setLoginError("");
+              setShowLoginModal(false);
+            }}
+          />
         </div>
       </div>
     );
@@ -1671,8 +1551,6 @@ export default function App() {
         onLogout={async () => {
           await supabase.auth.signOut();
           setUser(null);
-          localStorage.setItem("bits_user_logged_out", "true");
-          localStorage.removeItem("bits_user");
           setActivePage("home");
         }}
         onLoginClick={() => {
@@ -1699,14 +1577,7 @@ export default function App() {
               <div className="relative z-10 w-full max-w-md">
                 <LoginView
                   parentError={loginError}
-                  onLoginSuccess={(authenticatedUser) => {
-                    const savedId = localStorage.getItem("student_id_" + authenticatedUser.email);
-                    const updatedUser = {
-                      ...authenticatedUser,
-                      idNo: savedId || "-",
-                    };
-                    setUser(updatedUser);
-                    localStorage.setItem("bits_user", JSON.stringify(updatedUser));
+                  onLoginSuccess={() => {
                     setLoginError("");
                     setShowLoginModal(false);
                   }}

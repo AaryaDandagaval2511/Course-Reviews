@@ -5,31 +5,9 @@
 
 import React, { useState } from "react";
 import { motion } from "motion/react";
-import { BookOpen, ShieldAlert, Key, Mail, LogIn } from "lucide-react";
+import { BookOpen, ShieldAlert, LogIn } from "lucide-react";
 import { User } from "../types";
 import { supabase } from "../supabaseClient";
-
-// Helper to map BITSian emails to universally valid domains for Supabase GoTrue Auth
-function mapEmailForSupabase(email: string): string {
-  if (!email) return "";
-  const lower = email.toLowerCase().trim();
-  if (lower.includes("@") && (lower.endsWith(".bits-pilani.ac.in") || lower.endsWith(".ac.in"))) {
-    const parts = lower.split("@");
-    const username = parts[0];
-    const domain = parts[1];
-    
-    // Extract first domain segment (e.g., 'goa', 'pilani', 'hyderabad', etc.)
-    const firstSegment = domain.split(".")[0];
-    // If it's just bits-pilani, use 'bits'
-    const suffix = firstSegment === "bits-pilani" ? "bits" : firstSegment;
-    
-    // Keep only letters, numbers, dots, and underscores for maximum email regex safety
-    const safeUsername = username.replace(/[^a-z0-9._]/g, "");
-    
-    return `${safeUsername}_${suffix}@gmail.com`;
-  }
-  return lower;
-}
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
@@ -38,11 +16,7 @@ interface LoginViewProps {
 }
 
 export default function LoginView({ onLoginSuccess, onClose, parentError }: LoginViewProps) {
-  const [email, setEmail] = useState("");
-  const [campus, setCampus] = useState<"Pilani" | "Goa" | "Hyderabad" | "Dubai">("Goa");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleGoogleSignIn = async () => {
@@ -74,86 +48,6 @@ export default function LoginView({ onLoginSuccess, onClose, parentError }: Logi
       setGoogleLoading(false);
     }
   };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-
-    if (!email.trim()) {
-      setError("Please enter your BITS Mail address.");
-      return;
-    }
-
-    const lowerEmail = email.toLowerCase().trim();
-    if (!lowerEmail.endsWith("@goa.bits-pilani.ac.in")) {
-      setError("Access is restricted to @goa.bits-pilani.ac.in email addresses only.");
-      return;
-    }
-
-    setLoading(true);
-
-    const prefix = lowerEmail.split("@")[0];
-    const nameParts = prefix.replace(/\d+/g, "").split(/[._]/).map(p => p.charAt(0).toUpperCase() + p.slice(1));
-    const studentName = nameParts.filter(Boolean).join(" ") || "Student BITSian";
-
-    const numMatch = prefix.match(/\d+/);
-    const year = numMatch ? `20${numMatch[0]}`.substring(0, 4) : "2023";
-    const branchCode = "A7PS";
-    const seqNo = Math.floor(Math.random() * 800 + 100).toString();
-    const mockIdNo = `${year}${branchCode}${seqNo}G`;
-
-    const defaultPassword = password || "MockPassword123!";
-    const supabaseEmail = mapEmailForSupabase(lowerEmail);
-
-    try {
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: supabaseEmail,
-        password: defaultPassword,
-      });
-
-      if (signInError) {
-        console.warn("Manual Login: Sign in failed, attempting sign up:", signInError.message);
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email: supabaseEmail,
-          password: defaultPassword,
-          options: {
-            data: {
-              full_name: studentName,
-            }
-          }
-        });
-
-        if (signUpError) {
-          console.error("Manual Login: sign up failed:", signUpError.message);
-        } else if (signUpData?.user) {
-          console.log("Manual Login: sign up succeeded, logging in...");
-          const { error: reSignInError } = await supabase.auth.signInWithPassword({
-            email: supabaseEmail,
-            password: defaultPassword,
-          });
-          if (reSignInError) {
-            console.error("Manual Login: sign in after sign up failed:", reSignInError.message);
-          }
-        }
-      } else {
-        console.log("Manual Login: sign in succeeded:", signInData?.user?.id);
-      }
-    } catch (err: any) {
-      console.error("Manual Login: general auth error:", err);
-    }
-
-    const authenticatedUser: User = {
-      email: lowerEmail,
-      name: studentName,
-      campus: "Goa",
-      idNo: mockIdNo,
-    };
-
-    onLoginSuccess(authenticatedUser);
-    setLoading(false);
-  };
-
-  // Quick / mock sign-in presets removed in production
 
   const activeError = error || parentError;
 
@@ -204,66 +98,10 @@ export default function LoginView({ onLoginSuccess, onClose, parentError }: Logi
             <span>{googleLoading ? "Connecting..." : "Continue with BITS email ID"}</span>
           </button>
 
-          <div className="relative flex items-center justify-center my-4">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-app-border"></div>
-            </div>
-            <span className="relative px-3 bg-app-surface text-[10px] font-bold font-mono text-app-text-secondary uppercase tracking-widest">
-              Or Use Password
-            </span>
+          <div className="rounded-2xl border border-app-border bg-app-bg/70 p-4 text-xs text-app-text-secondary">
+            <p className="font-semibold text-app-text-primary">Use your Goa BITS Google account.</p>
+            <p className="mt-1 leading-relaxed">Only addresses ending in @goa.bits-pilani.ac.in are allowed. After sign-in, the app will keep that session only for the current authenticated user.</p>
           </div>
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Email input */}
-            <div>
-              <label className="block text-[10px] font-bold font-mono text-app-text-secondary uppercase tracking-widest mb-1.5">
-                BITS Mail Address
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-3 h-4 w-4 text-app-text-secondary" />
-                <input
-                  type="email"
-                  placeholder="f20220199@goa.bits-pilani.ac.in"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-xl border border-app-border bg-app-bg pl-10.5 pr-4 py-2.5 text-xs text-app-text-primary placeholder:text-app-text-secondary/40 focus:border-app-accent focus:outline-none focus:ring-1 focus:ring-app-accent"
-                />
-              </div>
-            </div>
-
-            {/* Password input */}
-            <div>
-              <label className="block text-[10px] font-bold font-mono text-app-text-secondary uppercase tracking-widest mb-1.5">
-                Password
-              </label>
-              <div className="relative">
-                <Key className="absolute left-3.5 top-3 h-4 w-4 text-app-text-secondary" />
-                <input
-                  type="password"
-                  placeholder="•••••••••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-xl border border-app-border bg-app-bg pl-10.5 pr-4 py-2.5 text-xs text-app-text-primary placeholder:text-app-text-secondary/40 focus:border-app-accent focus:outline-none focus:ring-1 focus:ring-app-accent"
-                />
-              </div>
-            </div>
-
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-app-accent py-3 text-xs font-bold text-white hover:bg-app-accent-hover focus:outline-none transition-all duration-200 shadow-sm cursor-pointer disabled:opacity-50"
-            >
-              {loading ? (
-                <span>Authenticating...</span>
-              ) : (
-                <>
-                  <LogIn className="h-4 w-4" />
-                  <span>Secure Sign In</span>
-                </>
-              )}
-            </button>
-          </form>
         </div>
 
         {/* Quick/mock presets removed to rely solely on Supabase-backed users */}
