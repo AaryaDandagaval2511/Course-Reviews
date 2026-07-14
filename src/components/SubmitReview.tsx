@@ -322,6 +322,12 @@ export default function SubmitReview({
     e.preventDefault();
     if (!validateStep()) return;
 
+    const finalStep = isProject ? 2 : 4;
+    if (step < finalStep) {
+      setStep((prev) => prev + 1);
+      return;
+    }
+
     if (isProject) {
       if (!user) {
         onLoginClick();
