@@ -322,12 +322,6 @@ export default function SubmitReview({
     e.preventDefault();
     if (!validateStep()) return;
 
-    const finalStep = isProject ? 2 : 4;
-    if (step < finalStep) {
-      setStep((prev) => prev + 1);
-      return;
-    }
-
     if (isProject) {
       if (!user) {
         onLoginClick();
@@ -1274,6 +1268,7 @@ export default function SubmitReview({
 
             {step < (isProject ? 2 : 4) ? (
               <button
+                key="next-button"
                 type="button"
                 onClick={handleNext}
                 className="flex items-center gap-1.5 rounded-xl bg-app-accent px-5 py-2.5 text-sm font-bold text-white hover:bg-app-accent-hover shadow-sm focus:outline-none font-sans"
@@ -1283,6 +1278,7 @@ export default function SubmitReview({
               </button>
             ) : (
               <button
+                key="submit-button"
                 type="submit"
                 disabled={isSubmittingProject}
                 className="flex items-center gap-2 rounded-xl bg-app-accent px-6 py-2.5 text-sm font-bold text-white hover:bg-app-accent-hover focus:outline-none font-sans transition-all disabled:opacity-50"
