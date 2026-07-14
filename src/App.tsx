@@ -7,7 +7,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Search, ChevronDown, Filter, SlidersHorizontal, BookOpen, Compass, AlertCircle, Heart } from "lucide-react";
 import { Course, Review, User, Page, Project } from "./types";
-import { INITIAL_COURSES, INITIAL_REVIEWS, INITIAL_PROJECTS } from "./data";
 import { supabase } from "./supabaseClient";
 
 // Subcomponents
@@ -206,7 +205,7 @@ export default function App() {
   // Data States
   const [courses, setCourses] = useState<Course[]>(() => {
     const savedCourses = localStorage.getItem("bits_courses");
-    const parsed: Course[] = savedCourses ? JSON.parse(savedCourses) : INITIAL_COURSES;
+    const parsed: Course[] = savedCourses ? JSON.parse(savedCourses) : [];
     return parsed.map((c) => ({
       ...c,
       dept: c.dept || c.code.split(" ")[0],
@@ -215,7 +214,7 @@ export default function App() {
 
   const [reviews, setReviews] = useState<Review[]>(() => {
     const savedReviews = localStorage.getItem("bits_reviews");
-    return savedReviews ? JSON.parse(savedReviews) : INITIAL_REVIEWS;
+    return savedReviews ? JSON.parse(savedReviews) : [];
   });
 
   const [bookmarks, setBookmarks] = useState<string[]>(() => {
@@ -225,7 +224,7 @@ export default function App() {
 
   const [projects, setProjects] = useState<Project[]>(() => {
     const savedProjects = localStorage.getItem("bits_projects");
-    return savedProjects ? JSON.parse(savedProjects) : INITIAL_PROJECTS;
+    return savedProjects ? JSON.parse(savedProjects) : [];
   });
 
   // Supabase Course Details states
@@ -905,13 +904,26 @@ export default function App() {
     const initAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const email = session.user.email || "anonymous@goa.bits-pilani.ac.in";
+        const email = session.user.email || "";
+        const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in");
+        if (!isAllowed) {
+          // Immediately sign out disallowed accounts
+          try {
+            await supabase.auth.signOut();
+          } catch (e) {
+            console.warn("Failed to sign out disallowed user:", e);
+          }
+          setUser(null);
+          setLoginError("Access restricted: please sign in with your @goa.bits-pilani.ac.in address.");
+          setShowLoginModal(true);
+          return;
+        }
         const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
         const savedId = localStorage.getItem("student_id_" + email);
         setUser({
           email,
           name,
-          campus: email.toLowerCase().endsWith("@goa.bits-pilani.ac.in") ? "Goa" : "Pilani",
+          campus: "Goa",
           idNo: savedId || "-",
         });
       }
@@ -920,13 +932,25 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        const email = session.user.email || "anonymous@goa.bits-pilani.ac.in";
+        const email = session.user.email || "";
+        const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in");
+        if (!isAllowed) {
+          try {
+            await supabase.auth.signOut();
+          } catch (e) {
+            console.warn("Failed to sign out disallowed user on auth change:", e);
+          }
+          setUser(null);
+          setLoginError("Access restricted: please sign in with your @goa.bits-pilani.ac.in address.");
+          setShowLoginModal(true);
+          return;
+        }
         const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
         const savedId = localStorage.getItem("student_id_" + email);
         setUser({
           email,
           name,
-          campus: email.toLowerCase().endsWith("@goa.bits-pilani.ac.in") ? "Goa" : "Pilani",
+          campus: "Goa",
           idNo: savedId || "-",
         });
       } else {
@@ -947,18 +971,19 @@ export default function App() {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const origin = event.origin;
-      if (!origin.endsWith(".run.app") && !origin.includes("localhost")) {
+      // Accept messages from the same origin (production) or localhost during development
+      if (origin !== window.location.origin && !origin.includes("localhost")) {
         return;
       }
       if (event.data?.type === "SUPABASE_AUTH_SUCCESS") {
         supabase.auth.getSession().then(({ data: { session } }) => {
           if (session?.user) {
             const email = session.user.email || "";
-            const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in") || email.toLowerCase().endsWith("@gmail.com");
+            const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in");
             if (!isAllowed) {
               supabase.auth.signOut();
               setUser(null);
-              setLoginError("Access is restricted to @goa.bits-pilani.ac.in or @gmail.com BITS Mail addresses.");
+              setLoginError("Access is restricted to @goa.bits-pilani.ac.in email addresses.");
               setShowLoginModal(true);
             } else {
               const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);

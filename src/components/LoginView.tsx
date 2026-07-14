@@ -5,7 +5,7 @@
 
 import React, { useState } from "react";
 import { motion } from "motion/react";
-import { BookOpen, ShieldAlert, Key, Mail, Sparkles, LogIn } from "lucide-react";
+import { BookOpen, ShieldAlert, Key, Mail, LogIn } from "lucide-react";
 import { User } from "../types";
 import { supabase } from "../supabaseClient";
 
@@ -153,54 +153,7 @@ export default function LoginView({ onLoginSuccess, onClose, parentError }: Logi
     setLoading(false);
   };
 
-  const handleQuickLogin = async (emailPreset: string, namePreset: string, customCampus: "Pilani" | "Goa" | "Hyderabad" | "Dubai") => {
-    setLoading(true);
-    const defaultPassword = "MockPassword123!";
-    const supabaseEmail = mapEmailForSupabase(emailPreset);
-    try {
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: supabaseEmail,
-        password: defaultPassword,
-      });
-
-      if (signInError) {
-        console.warn("Quick Login: Sign in failed, attempting sign up:", signInError.message);
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email: supabaseEmail,
-          password: defaultPassword,
-          options: {
-            data: {
-              full_name: namePreset,
-            }
-          }
-        });
-
-        if (!signUpError && signUpData?.user) {
-          const { error: reSignInError } = await supabase.auth.signInWithPassword({
-            email: supabaseEmail,
-            password: defaultPassword,
-          });
-          if (reSignInError) {
-            console.error("Quick Login: re-signIn failed:", reSignInError.message);
-          }
-        } else if (signUpError) {
-          console.error("Quick Login: signUp failed:", signUpError.message);
-        }
-      } else {
-        console.log("Quick Login: sign in succeeded:", signInData?.user?.id);
-      }
-    } catch (err) {
-      console.error("Supabase quick login auth error:", err);
-    }
-
-    onLoginSuccess({
-      email: emailPreset,
-      name: namePreset,
-      campus: "Goa",
-      idNo: "2022A7PS0199G",
-    });
-    setLoading(false);
-  };
+  // Quick / mock sign-in presets removed in production
 
   const activeError = error || parentError;
 
@@ -313,41 +266,7 @@ export default function LoginView({ onLoginSuccess, onClose, parentError }: Logi
           </form>
         </div>
 
-        {/* Quick presets */}
-        <div className="mt-8 border-t border-app-border pt-6">
-          <span className="block text-[10px] font-bold font-mono text-app-text-secondary uppercase tracking-widest text-center mb-4">
-            Or Sign In Instantly (Mock Profiles)
-          </span>
-          <div className="space-y-2.5">
-            <button
-              onClick={() => handleQuickLogin("aarya.dan@goa.bits-pilani.ac.in", "Aarya Dan", "Goa")}
-              className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-app-border bg-app-bg text-app-text-secondary hover:text-app-text-primary hover:bg-app-surface transition-all text-xs text-left"
-            >
-              <div className="flex items-center gap-2">
-                <div className="h-6 w-6 flex items-center justify-center rounded-full bg-app-accent/10 text-app-accent text-[10px] font-bold">AD</div>
-                <div>
-                  <span className="block font-semibold">Aarya Dan</span>
-                  <span className="block text-[9px] text-app-text-secondary font-sans font-normal">aarya.dan@goa.bits-pilani.ac.in</span>
-                </div>
-              </div>
-              <Sparkles className="h-3.5 w-3.5 text-app-accent" />
-            </button>
-
-            <button
-              onClick={() => handleQuickLogin("f20220199@goa.bits-pilani.ac.in", "Rahul Sharma", "Goa")}
-              className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-app-border bg-app-bg text-app-text-secondary hover:text-app-text-primary hover:bg-app-surface transition-all text-xs text-left"
-            >
-              <div className="flex items-center gap-2">
-                <div className="h-6 w-6 flex items-center justify-center rounded-full bg-app-accent/10 text-app-accent text-[10px] font-bold">RS</div>
-                <div>
-                  <span className="block font-semibold">Rahul Sharma</span>
-                  <span className="block text-[9px] text-app-text-secondary font-sans font-normal">f20220199@goa</span>
-                </div>
-              </div>
-              <Sparkles className="h-3.5 w-3.5 text-app-accent" />
-            </button>
-          </div>
-        </div>
+        {/* Quick/mock presets removed to rely solely on Supabase-backed users */}
 
         {/* Cancel button */}
         <div className="text-center mt-6">
