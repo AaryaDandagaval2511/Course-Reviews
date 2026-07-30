@@ -5,8 +5,8 @@
 
 import React from "react";
 import { motion } from "motion/react";
-import { User, Review, Course, Project } from "../types";
-import { Award, BookOpen, Star, Clock, Trash2, Mail, GraduationCap, User as UserIcon, Pencil, Check, X, FolderGit2 } from "lucide-react";
+import { User, Review, Course } from "../types";
+import { Award, BookOpen, Star, Clock, Trash2, Mail, GraduationCap, User as UserIcon, Pencil, Check, X } from "lucide-react";
 
 interface ProfileViewProps {
   user: User | null;
@@ -18,11 +18,6 @@ interface ProfileViewProps {
   onDeleteReview?: (reviewId: string) => void;
   onEditReview?: (review: Review) => void;
   onUpdateStudentId?: (newIdNo: string) => void;
-  // Project review props
-  projectReviews?: Project[];
-  onDeleteProjectReview?: (projectId: string | number) => void;
-  onEditProjectReview?: (project: Project) => void;
-  currentUserId?: string | null;
 }
 
 export default function ProfileView({
@@ -35,10 +30,6 @@ export default function ProfileView({
   onDeleteReview,
   onEditReview,
   onUpdateStudentId,
-  projectReviews = [],
-  onDeleteProjectReview,
-  onEditProjectReview,
-  currentUserId,
 }: ProfileViewProps) {
   if (!user) {
     return (
@@ -189,7 +180,7 @@ export default function ProfileView({
           {/* Quick stats panel */}
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-2xl border border-app-border bg-app-surface p-4 text-center">
-              <span className="block text-2xl font-black text-app-text-primary">{userReviews.length + projectReviews.length}</span>
+              <span className="block text-2xl font-black text-app-text-primary">{userReviews.length}</span>
               <span className="text-[10px] font-bold text-app-text-secondary uppercase tracking-widest font-mono mt-1 block leading-tight">Reviews Contributed</span>
             </div>
             <div className="rounded-2xl border border-app-border bg-app-surface p-4 text-center">
@@ -200,165 +191,80 @@ export default function ProfileView({
         </div>
 
         {/* Right Column: Contributed Reviews */}
-        <div className="lg:col-span-2 space-y-8">
+        <div className="lg:col-span-2 space-y-6">
+          <h3 className="font-sans text-sm font-bold tracking-wider text-app-text-secondary uppercase font-mono">
+            My Contributions ({userReviews.length})
+          </h3>
 
-          {/* ── Course Reviews ── */}
-          <div className="space-y-4">
-            <h3 className="font-sans text-sm font-bold tracking-wider text-app-text-secondary uppercase font-mono">
-              My Course Reviews ({userReviews.length})
-            </h3>
+          {userReviews.length === 0 ? (
+            <div className="rounded-3xl border border-app-border bg-app-surface p-10 text-center">
+              <BookOpen className="h-8 w-8 text-app-text-secondary mx-auto mb-3" />
+              <p className="text-xs text-app-text-secondary font-sans">
+                You haven't contributed any course reviews yet.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {userReviews.map((rev) => {
+                const course = courses.find((c) => c.id === rev.courseId || c.code === rev.courseId);
+                return (
+                  <div
+                    key={rev.id}
+                    className="group relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-app-border bg-app-surface p-5 transition-all duration-300 hover:border-app-accent hover:shadow-sm"
+                  >
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-app-accent font-mono">
+                          {course?.code || "HEL"}
+                        </span>
+                        <span className="text-[10px] text-app-text-secondary font-mono">• {rev.semester}</span>
+                      </div>
+                      <h4
+                        onClick={() => course && onSelectCourse(course)}
+                        className="font-sans text-sm font-bold text-app-text-primary truncate cursor-pointer hover:text-app-accent transition-colors"
+                      >
+                        {course?.name || "Elective Course"}
+                      </h4>
+                      <p className="text-xs text-app-text-secondary italic line-clamp-1 font-sans">
+                        "{rev.whatWorkedWell}"
+                      </p>
+                    </div>
 
-            {userReviews.length === 0 ? (
-              <div className="rounded-3xl border border-app-border bg-app-surface p-10 text-center">
-                <BookOpen className="h-8 w-8 text-app-text-secondary mx-auto mb-3" />
-                <p className="text-xs text-app-text-secondary font-sans">
-                  You haven't contributed any course reviews yet.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {userReviews.map((rev) => {
-                  const course = courses.find((c) => c.id === rev.courseId || c.code === rev.courseId);
-                  return (
-                    <div
-                      key={rev.id}
-                      className="group relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-app-border bg-app-surface p-5 transition-all duration-300 hover:border-app-accent hover:shadow-sm"
-                    >
-                      <div className="space-y-1.5 flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-app-accent font-mono">
-                            {course?.code || "HEL"}
-                          </span>
-                          <span className="text-[10px] text-app-text-secondary font-mono">• {rev.semester}</span>
-                        </div>
-                        <h4
-                          onClick={() => course && onSelectCourse(course)}
-                          className="font-sans text-sm font-bold text-app-text-primary truncate cursor-pointer hover:text-app-accent transition-colors"
+                    <div className="flex items-center gap-4 shrink-0">
+                      <div className="text-right">
+                        <span className="block text-[8px] font-bold text-app-text-secondary uppercase font-mono font-sans">Grade</span>
+                        <span className="text-sm font-black text-app-text-primary">{rev.gradeReceived}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[8px] font-bold text-app-text-secondary uppercase font-mono font-sans">Marks</span>
+                        <span className="text-sm font-black text-app-text-primary">{rev.marksReceived}</span>
+                      </div>
+
+                      {onEditReview && (
+                        <button
+                          onClick={() => onEditReview(rev)}
+                          className="rounded-lg p-2 text-app-text-secondary hover:text-app-accent hover:bg-app-accent/10 transition-colors focus:outline-none"
+                          title="Edit Review"
                         >
-                          {course?.name || "Elective Course"}
-                        </h4>
-                        <p className="text-xs text-app-text-secondary italic line-clamp-1 font-sans">
-                          "{rev.whatWorkedWell}"
-                        </p>
-                      </div>
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
 
-                      <div className="flex items-center gap-4 shrink-0">
-                        <div className="text-right">
-                          <span className="block text-[8px] font-bold text-app-text-secondary uppercase font-mono font-sans">Grade</span>
-                          <span className="text-sm font-black text-app-text-primary">{rev.gradeReceived}</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="block text-[8px] font-bold text-app-text-secondary uppercase font-mono font-sans">Marks</span>
-                          <span className="text-sm font-black text-app-text-primary">{rev.marksReceived}</span>
-                        </div>
-
-                        {onEditReview && (
-                          <button
-                            onClick={() => onEditReview(rev)}
-                            className="rounded-lg p-2 text-app-text-secondary hover:text-app-accent hover:bg-app-accent/10 transition-colors focus:outline-none"
-                            title="Edit Review"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        )}
-
-                        {onDeleteReview && (
-                          <button
-                            onClick={() => onDeleteReview(rev.id)}
-                            className="rounded-lg p-2 text-app-text-secondary hover:text-app-error hover:bg-app-error/10 transition-colors focus:outline-none"
-                            title="Delete Review"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
+                      {onDeleteReview && (
+                        <button
+                          onClick={() => onDeleteReview(rev.id)}
+                          className="rounded-lg p-2 text-app-text-secondary hover:text-app-error hover:bg-app-error/10 transition-colors focus:outline-none"
+                          title="Delete Review"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* ── Project Reviews ── */}
-          <div className="space-y-4">
-            <h3 className="font-sans text-sm font-bold tracking-wider text-app-text-secondary uppercase font-mono">
-              My Project Reviews ({projectReviews.length})
-            </h3>
-
-            {projectReviews.length === 0 ? (
-              <div className="rounded-3xl border border-app-border bg-app-surface p-10 text-center">
-                <FolderGit2 className="h-8 w-8 text-app-text-secondary mx-auto mb-3" />
-                <p className="text-xs text-app-text-secondary font-sans">
-                  You haven't submitted any project reviews yet.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {projectReviews.map((proj) => {
-                  const isOwner = currentUserId && proj.user_id === currentUserId;
-                  return (
-                    <div
-                      key={String(proj.id)}
-                      className="group relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-app-border bg-app-surface p-5 transition-all duration-300 hover:border-app-accent hover:shadow-sm"
-                    >
-                      <div className="space-y-1.5 flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-app-accent font-mono">
-                            {proj.type || "Project"}
-                          </span>
-                          <span className="text-[10px] text-app-text-secondary font-mono">• {proj.taken_in}</span>
-                        </div>
-                        <h4 className="font-sans text-sm font-bold text-app-text-primary truncate">
-                          {proj.project_title}
-                        </h4>
-                        <p className="text-xs text-app-text-secondary line-clamp-1 font-sans">
-                          Supervisor: <span className="font-semibold">{proj.prof_name}</span>
-                          {proj.domain && ` · ${proj.domain}`}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-right hidden sm:block">
-                          <span className="block text-[8px] font-bold text-app-text-secondary uppercase font-mono">Branch</span>
-                          <span className="text-xs font-bold text-app-text-primary">
-                            {proj.student_branch.replace("B.E. ", "").replace("M.Sc. ", "")}
-                          </span>
-                        </div>
-
-                        <div className="text-right">
-                          <span className="block text-[8px] font-bold text-app-text-secondary uppercase font-mono">Grade</span>
-                          <span className="text-sm font-black text-app-text-primary">
-                            {proj.grade_rece || "N/A"}
-                          </span>
-                        </div>
-
-                        {isOwner && onEditProjectReview && (
-                          <button
-                            onClick={() => onEditProjectReview(proj)}
-                            className="rounded-lg p-2 text-app-text-secondary hover:text-app-accent hover:bg-app-accent/10 transition-colors focus:outline-none"
-                            title="Edit Project Review"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        )}
-
-                        {isOwner && onDeleteProjectReview && (
-                          <button
-                            onClick={() => onDeleteProjectReview(proj.id)}
-                            className="rounded-lg p-2 text-app-text-secondary hover:text-app-error hover:bg-app-error/10 transition-colors focus:outline-none"
-                            title="Delete Project Review"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

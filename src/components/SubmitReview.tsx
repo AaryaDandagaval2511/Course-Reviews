@@ -6,18 +6,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { BookOpen, GraduationCap, CheckCircle2, ArrowRight, ArrowLeft, Send, Sparkles, AlertCircle, Search, X, ChevronDown, Check, FolderGit2 } from "lucide-react";
-import { Course, Review, User, Project } from "../types";
-
-const semesterOptions = [
-  "2nd Semester 2025-2026",
-  "1st Semester 2025-2026",
-  "2nd Semester 2024-2025",
-  "1st Semester 2024-2025",
-  "2nd Semester 2023-2024",
-  "1st Semester 2023-2024",
-  "2nd Semester 2022-2023",
-  "1st Semester 2022-2023",
-];
+import { Course, Review, User } from "../types";
 
 interface SubmitReviewProps {
   user: User | null;
@@ -27,10 +16,9 @@ interface SubmitReviewProps {
   reviewToEdit?: Review | null;
   onCancelEdit?: () => void;
   onProjectsClick?: () => void;
-  onSubmitProject?: (projectData: Omit<Project, "id" | "created_at">, projectToEdit?: Project | null) => Promise<boolean>;
+  onSubmitProject?: (projectData: Omit<any, "id" | "created_at">) => Promise<boolean>;
   onSuccessProjectReturn?: () => void;
   initialCategory?: "HEL" | "OPEL_DEL" | "projects";
-  projectToEdit?: Project | null;
 }
 
 export default function SubmitReview({
@@ -44,7 +32,6 @@ export default function SubmitReview({
   onSubmitProject,
   onSuccessProjectReturn,
   initialCategory,
-  projectToEdit = null,
 }: SubmitReviewProps) {
   // Multistep forms
   const [step, setStep] = useState(1);
@@ -57,7 +44,7 @@ export default function SubmitReview({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [icForSemester, setIcForSemester] = useState("");
 
-  const [semester, setSemester] = useState(semesterOptions[0]);
+  const [semester, setSemester] = useState("First Semester 2024-2025");
   const [gradeReceived, setGradeReceived] = useState("A");
   const [marksReceived, setMarksReceived] = useState("");
   const [avMarks, setAvMarks] = useState("");
@@ -83,10 +70,9 @@ export default function SubmitReview({
   const [studentBranch, setStudentBranch] = useState("");
   const [projectType, setProjectType] = useState("SOP");
   const [domain, setDomain] = useState("");
-  const [takenIn, setTakenIn] = useState(semesterOptions[0]);
+  const [takenIn, setTakenIn] = useState("First Semester 2025-2026");
   const [projectInfo, setProjectInfo] = useState("");
   const [experience, setExperience] = useState("");
-  const [gradeRece, setGradeRece] = useState("");
   const [isSubmittingProject, setIsSubmittingProject] = useState(false);
 
   // Error messages
@@ -105,7 +91,7 @@ export default function SubmitReview({
       }
       setSelectedCourseId(reviewToEdit.courseId);
       setIcForSemester(reviewToEdit.icForSemester || "");
-      setSemester(semesterOptions.includes(reviewToEdit.semester) ? reviewToEdit.semester : semesterOptions[0]);
+      setSemester(reviewToEdit.semester);
       setGradeReceived(reviewToEdit.gradeReceived);
       setMarksReceived(reviewToEdit.marksReceived);
       setAvMarks(reviewToEdit.avMarks || "");
@@ -128,7 +114,7 @@ export default function SubmitReview({
       setSelectedCourseId("");
       setSearchQuery("");
       setIcForSemester("");
-      setSemester(semesterOptions[0]);
+      setSemester("First Semester 2024-2025");
       setGradeReceived("A");
       setMarksReceived("");
       setAvMarks("");
@@ -149,26 +135,6 @@ export default function SubmitReview({
     }
   }, [reviewToEdit, courses, initialCategory]);
 
-  // Effect to pre-fill project form when editing a project review
-  React.useEffect(() => {
-    if (projectToEdit) {
-      setCategory("projects");
-      setProjectTitle(projectToEdit.project_title || "");
-      setProfName(projectToEdit.prof_name || "");
-      setProfBranch(projectToEdit.prof_branch || "");
-      setStudentBranch(projectToEdit.student_branch || "");
-      setProjectType(projectToEdit.type || "SOP");
-      setDomain(projectToEdit.domain || "");
-      setTakenIn(semesterOptions.includes(projectToEdit.taken_in) ? projectToEdit.taken_in : semesterOptions[0]);
-      setProjectInfo(projectToEdit.project_info || "");
-      setExperience(projectToEdit.experience || "");
-      setGradeRece(projectToEdit.grade_rece || "");
-      setStep(1);
-      setSuccess(false);
-      setError("");
-    }
-  }, [projectToEdit]);
-
   // Filter courses based on category
   const filteredCourses = courses.filter((c) => {
     if (category === "projects") return false;
@@ -183,7 +149,23 @@ export default function SubmitReview({
     );
   });
 
-  const semestersList = semesterOptions;
+  const semestersList = [
+    "First Semester 2025-2026",
+    "Second Semester 2024-2025",
+    "First Semester 2024-2025",
+    "Second Semester 2023-2024",
+    "First Semester 2023-2024",
+  ];
+
+  const semestersListProjects = [
+    "First Semester 2025-2026",
+    "Second Semester 2024-2025",
+    "First Semester 2024-2025",
+    "Second Semester 2023-2024",
+    "First Semester 2023-2024",
+    "Second Semester 2022-2023",
+    "First Semester 2022-2023",
+  ];
 
   const branchesAndDeptsListProjects = [
     "B.E. Chemical",
@@ -251,10 +233,6 @@ export default function SubmitReview({
         }
         if (!projectType) {
           setError("Please select the project type.");
-          return false;
-        }
-        if (!gradeRece) {
-          setError("Please select the grade received.");
           return false;
         }
       } else if (step === 2) {
@@ -340,15 +318,15 @@ export default function SubmitReview({
           prof_name: profName.trim().toUpperCase(),
           prof_branch: profBranch,
           student_branch: studentBranch,
+          project_type: projectType,
           domain: domain,
           type: projectType,
           taken_in: takenIn,
           project_info: projectInfo.trim(),
           experience: experience.trim(),
-          grade_rece: gradeRece,
         };
         if (onSubmitProject) {
-          const completed = await onSubmitProject(projectData, projectToEdit);
+          const completed = await onSubmitProject(projectData);
           if (completed) {
             setSuccess(true);
           } else {
@@ -477,7 +455,6 @@ export default function SubmitReview({
                   setStudentBranch("");
                   setProjectInfo("");
                   setExperience("");
-                  setGradeRece("");
                   setStep(1);
                   setSuccess(false);
                   setError("");
@@ -806,28 +783,9 @@ export default function SubmitReview({
                       onChange={(e) => setTakenIn(e.target.value)}
                       className="w-full rounded-xl border border-app-border bg-app-bg px-3.5 py-2.5 text-sm text-app-text-primary shadow-sm focus:border-app-accent focus:outline-none font-sans"
                     >
-                      {semesterOptions.map((sem) => (
+                      {semestersListProjects.map((sem) => (
                         <option key={sem} value={sem}>
                           {sem}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Grade Received */}
-                  <div>
-                    <label className="block text-xs font-bold text-app-text-secondary uppercase tracking-wider mb-1.5 font-mono">
-                      Grade Received
-                    </label>
-                    <select
-                      value={gradeRece}
-                      onChange={(e) => setGradeRece(e.target.value)}
-                      className="w-full rounded-xl border border-app-border bg-app-bg px-3.5 py-2.5 text-sm font-medium text-app-text-primary shadow-sm focus:border-app-accent focus:outline-none font-sans"
-                    >
-                      <option value="" className="bg-app-bg text-app-text-primary">Select Grade</option>
-                      {gradesList.map((gr) => (
-                        <option key={gr} value={gr} className="bg-app-bg text-app-text-primary">
-                          {gr}
                         </option>
                       ))}
                     </select>
@@ -983,7 +941,7 @@ export default function SubmitReview({
                     onChange={(e) => setSemester(e.target.value)}
                     className="w-full rounded-xl border border-app-border bg-app-bg px-3.5 py-2.5 text-sm font-medium text-app-text-primary shadow-sm focus:border-app-accent focus:outline-none font-sans"
                   >
-                    {semesterOptions.map((sem) => (
+                    {semestersList.map((sem) => (
                       <option key={sem} value={sem} className="bg-app-bg text-app-text-primary">
                         {sem}
                       </option>
@@ -1295,7 +1253,6 @@ export default function SubmitReview({
 
             {step < (isProject ? 2 : 4) ? (
               <button
-                key="next-button"
                 type="button"
                 onClick={handleNext}
                 className="flex items-center gap-1.5 rounded-xl bg-app-accent px-5 py-2.5 text-sm font-bold text-white hover:bg-app-accent-hover shadow-sm focus:outline-none font-sans"
@@ -1305,7 +1262,6 @@ export default function SubmitReview({
               </button>
             ) : (
               <button
-                key="submit-button"
                 type="submit"
                 disabled={isSubmittingProject}
                 className="flex items-center gap-2 rounded-xl bg-app-accent px-6 py-2.5 text-sm font-bold text-white hover:bg-app-accent-hover focus:outline-none font-sans transition-all disabled:opacity-50"

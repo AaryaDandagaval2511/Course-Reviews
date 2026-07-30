@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
-
-export const BookmarkCountsContext = createContext<{ bookmarkCounts: Record<string, number> }>({ bookmarkCounts: {} });
 import { Search, ChevronDown, Filter, SlidersHorizontal, BookOpen, Compass, AlertCircle, Heart } from "lucide-react";
 import { Course, Review, User, Page, Project } from "./types";
+import { INITIAL_COURSES, INITIAL_REVIEWS, INITIAL_PROJECTS } from "./data";
 import { supabase } from "./supabaseClient";
 
 // Subcomponents
@@ -40,41 +39,111 @@ function getBitsIdAndName(email: string, fullName?: string) {
   }
 
   const idNo = `${year}A7PS${seqNo}G`;
-
+  
   let name = fullName;
   if (!name) {
     const nameParts = prefix.replace(/\d+/g, "").split(/[._]/).map(p => p.charAt(0).toUpperCase() + p.slice(1));
     name = nameParts.filter(Boolean).join(" ") || "Student BITSian";
   }
-
+  
   return { idNo, name };
 }
 
-// Helper to create the authenticated user object from the current Supabase session.
-function getAuthenticatedUserFromSession(session: { user?: { email?: string | null; user_metadata?: { full_name?: string } } } | null): User | null {
-  const email = session?.user?.email?.toLowerCase();
-  if (!email || !email.endsWith("@goa.bits-pilani.ac.in")) {
-    return null;
+// Helper to get a deterministic UUID from any email string (ensures mock/local logins get valid Postgres UUIDs)
+function getUuidFromEmail(email: string): string {
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) {
+    const char = email.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32bit integer
   }
-
-  const { name } = getBitsIdAndName(email, session?.user?.user_metadata?.full_name);
-  const savedId = localStorage.getItem("student_id_" + email);
-  return {
-    email,
-    name,
-    campus: "Goa",
-    idNo: savedId || "-",
-  };
+  const hex = Math.abs(hash).toString(16).padEnd(8, "0");
+  return `${hex}-0000-4000-8000-000000000000`;
 }
 
-async function getSupabaseUserId(): Promise<string | null> {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.user?.id ?? null;
-  } catch (err) {
-    console.warn("Failed to read Supabase session user id:", err);
-    return null;
+// Helper to map BITSian emails to universally valid domains for Supabase GoTrue Auth
+function mapEmailForSupabase(email: string): string {
+  if (!email) return "";
+  const lower = email.toLowerCase().trim();
+  if (lower.includes("@") && (lower.endsWith(".bits-pilani.ac.in") || lower.endsWith(".ac.in"))) {
+    const parts = lower.split("@");
+    const username = parts[0];
+    const domain = parts[1];
+    
+    // Extract first domain segment (e.g., 'goa', 'pilani', 'hyderabad', etc.)
+    const firstSegment = domain.split(".")[0];
+    // If it's just bits-pilani, use 'bits'
+    const suffix = firstSegment === "bits-pilani" ? "bits" : firstSegment;
+    
+    // Keep only letters, numbers, dots, and underscores for maximum email regex safety
+    const safeUsername = username.replace(/[^a-z0-9._]/g, "");
+    
+    return `${safeUsername}_${suffix}@gmail.com`;
   }
+  return lower;
+}
+
+// Helper to ensure a valid Supabase Auth session exists for the user.
+async function ensureSupabaseSession(email?: string, name?: string): Promise<string | null> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user?.id) {
+      return sessionData.session.user.id;
+    }
+
+    if (email) {
+      const supabaseEmail = mapEmailForSupabase(email);
+      const defaultPassword = "MockPassword123!";
+
+      console.log("ensureSupabaseSession: establishing background session for", supabaseEmail);
+      try {
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: supabaseEmail,
+          password: defaultPassword,
+        });
+
+        if (signInData?.user?.id) {
+          return signInData.user.id;
+        }
+
+        if (signInError) {
+          console.log("ensureSupabaseSession: background sign in failed, attempting background sign up...");
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: supabaseEmail,
+            password: defaultPassword,
+            options: {
+              data: {
+                full_name: name || "Student BITSian",
+              }
+            }
+          });
+
+          if (signUpData?.user?.id) {
+            try {
+              const { data: reSignInData } = await supabase.auth.signInWithPassword({
+                email: supabaseEmail,
+                password: defaultPassword,
+              });
+              if (reSignInData?.user?.id) {
+                return reSignInData.user.id;
+              }
+            } catch (reSignInErr) {
+              console.warn("ensureSupabaseSession: re-signin threw error, returning signup user id", reSignInErr);
+            }
+            return signUpData.user.id;
+          } else if (signUpError) {
+            console.error("ensureSupabaseSession: background signUp failed:", signUpError.message);
+          }
+        }
+      } catch (authErr: any) {
+        console.warn("ensureSupabaseSession: Supabase authentication threw error (e.g. offline/network issue). Falling back to deterministic UUID.", authErr.message || authErr);
+        return getUuidFromEmail(email);
+      }
+    }
+  } catch (err) {
+    console.error("Error in ensureSupabaseSession helper:", err);
+  }
+  return email ? getUuidFromEmail(email) : null;
 }
 
 export default function App() {
@@ -100,8 +169,36 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<"HEL" | "OPEL_DEL" | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
 
-  // Authentication State
-  const [user, setUser] = useState<User | null>(null);
+  // Authentication State (Preset Aarya Dan with valid Goa email for a full-featured start)
+  const [user, setUser] = useState<User | null>(() => {
+    const isLoggedOut = localStorage.getItem("bits_user_logged_out") === "true";
+    if (isLoggedOut) {
+      return null;
+    }
+    const savedUser = localStorage.getItem("bits_user");
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        if (parsed.campus !== "Goa") {
+          parsed.campus = "Goa";
+        }
+        const savedId = localStorage.getItem("student_id_" + parsed.email);
+        parsed.idNo = savedId || "-";
+        localStorage.setItem("bits_user", JSON.stringify(parsed));
+        return parsed;
+      } catch (e) {
+        return null;
+      }
+    }
+    const defaultEmail = "aarya.dan@goa.bits-pilani.ac.in";
+    const savedId = localStorage.getItem("student_id_" + defaultEmail);
+    return {
+      email: defaultEmail,
+      name: "Aarya Dan",
+      campus: "Goa",
+      idNo: savedId || "-",
+    };
+  });
 
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -109,7 +206,7 @@ export default function App() {
   // Data States
   const [courses, setCourses] = useState<Course[]>(() => {
     const savedCourses = localStorage.getItem("bits_courses");
-    const parsed: Course[] = savedCourses ? JSON.parse(savedCourses) : [];
+    const parsed: Course[] = savedCourses ? JSON.parse(savedCourses) : INITIAL_COURSES;
     return parsed.map((c) => ({
       ...c,
       dept: c.dept || c.code.split(" ")[0],
@@ -118,7 +215,7 @@ export default function App() {
 
   const [reviews, setReviews] = useState<Review[]>(() => {
     const savedReviews = localStorage.getItem("bits_reviews");
-    return savedReviews ? JSON.parse(savedReviews) : [];
+    return savedReviews ? JSON.parse(savedReviews) : INITIAL_REVIEWS;
   });
 
   const [bookmarks, setBookmarks] = useState<string[]>(() => {
@@ -126,10 +223,10 @@ export default function App() {
     return savedBookmarks ? JSON.parse(savedBookmarks) : ["HSS_F368", "HSS_F391"]; // Default preset bookmarks
   });
 
-  // State for global bookmark counts per course_code
-  const [bookmarkCounts, setBookmarkCounts] = useState<Record<string, number>>({});
-
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    const savedProjects = localStorage.getItem("bits_projects");
+    return savedProjects ? JSON.parse(savedProjects) : INITIAL_PROJECTS;
+  });
 
   // Supabase Course Details states
   const [currentCourseReviews, setCurrentCourseReviews] = useState<Review[]>([]);
@@ -143,9 +240,6 @@ export default function App() {
   // Edit Review State
   const [reviewToEdit, setReviewToEdit] = useState<Review | null>(null);
   const [reviewToDeleteId, setReviewToDeleteId] = useState<string | null>(null);
-  const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
-  const [projectToDeleteId, setProjectToDeleteId] = useState<string | number | null>(null);
-  const [currentSupabaseUserId, setCurrentSupabaseUserId] = useState<string | null>(null);
 
   // Filter & Search States
   const [searchQuery, setSearchQuery] = useState("");
@@ -217,19 +311,13 @@ export default function App() {
           console.warn("Error fetching OPEL/DEL reviews from Supabase:", e);
         }
 
-        // Fetch bookmarks for counts — single query, all rows
+        // Fetch bookmarks for counts
         let dbBookmarks: any[] = [];
         try {
           const { data, error } = await supabase.from("bookmarks").select("course_code");
-          console.log("[BookmarkCounts] Supabase response:", { data, error });
-          if (error) {
-            console.error("[BookmarkCounts] Fetch error:", error.message, error.details || "", error.hint || "");
-          } else if (data) {
-            dbBookmarks = data;
-            console.log("[BookmarkCounts] Raw rows fetched:", data.length, data);
-          }
+          if (!error && data) dbBookmarks = data;
         } catch (e) {
-          console.error("[BookmarkCounts] Unexpected error fetching bookmarks:", e);
+          console.warn("Error fetching bookmarks from Supabase:", e);
         }
 
         // Fetch del_d mappings
@@ -250,14 +338,11 @@ export default function App() {
         // Fetch projects from Supabase
         try {
           const { data, error } = await supabase.from("projects").select("*");
-          if (!error && data) {
-            setProjects(data || []);
-          } else {
-            setProjects([]);
+          if (!error && data && data.length > 0) {
+            setProjects(data);
           }
         } catch (e) {
           console.warn("Error fetching projects from Supabase:", e);
-          setProjects([]);
         }
 
         const reviewCounts: Record<string, number> = {};
@@ -272,14 +357,12 @@ export default function App() {
           }
         });
 
-        const tempBookmarkCounts: Record<string, number> = {};
+        const bookmarkCounts: Record<string, number> = {};
         dbBookmarks.forEach((b) => {
           if (b.course_code) {
-            tempBookmarkCounts[b.course_code] = (tempBookmarkCounts[b.course_code] || 0) + 1;
+            bookmarkCounts[b.course_code] = (bookmarkCounts[b.course_code] || 0) + 1;
           }
         });
-        console.log("[BookmarkCounts] Built course_code→count map:", tempBookmarkCounts);
-        setBookmarkCounts(tempBookmarkCounts);
 
         const mappedHelCourses: Course[] = dbCourses.map((c) => {
           const code = c.course_code || "";
@@ -295,7 +378,7 @@ export default function App() {
             courseTotal: c.course_total ? String(c.course_total) : undefined,
             courseHandoutUrl: c.course_handout || undefined,
             description: c.info || "",
-            bookmarkCount: tempBookmarkCounts[code] || 0,
+            bookmarkCount: bookmarkCounts[code] || 0,
             reviewCount: reviewCounts[code] || 0,
             dept: dept || code.split(" ")[0],
             nickname: c.nickname || "",
@@ -316,7 +399,7 @@ export default function App() {
             courseTotal: c.course_total ? String(c.course_total) : undefined,
             courseHandoutUrl: c.course_handout || undefined,
             description: c.info || "",
-            bookmarkCount: tempBookmarkCounts[code] || 0,
+            bookmarkCount: bookmarkCounts[code] || 0,
             reviewCount: reviewCounts[code] || 0,
             dept: dept || code.split(" ")[0],
             nickname: c.nickname || "",
@@ -340,7 +423,7 @@ export default function App() {
     const loadUserBookmarks = async () => {
       if (!user) return;
       try {
-        const supabaseUserId = await getSupabaseUserId();
+        const supabaseUserId = await ensureSupabaseSession(user.email, user.name);
         if (!supabaseUserId) {
           console.error("Could not obtain a valid Supabase user ID for bookmarks loading.");
           const localSaved = localStorage.getItem(`bookmarks_${user.email}`);
@@ -386,7 +469,7 @@ export default function App() {
     const loadUserReviews = async () => {
       if (!user) return;
       try {
-        const supabaseUserId = await getSupabaseUserId();
+        const supabaseUserId = await ensureSupabaseSession(user.email, user.name);
         if (!supabaseUserId) {
           console.error("Could not obtain a valid Supabase user ID for reviews loading.");
           return;
@@ -561,7 +644,7 @@ export default function App() {
           let supabaseUserId: string | null = null;
           if (user) {
             try {
-              supabaseUserId = await getSupabaseUserId();
+              supabaseUserId = await ensureSupabaseSession(user.email, user.name);
             } catch (e) {
               console.warn("Could not retrieve Supabase session:", e);
             }
@@ -656,7 +739,7 @@ export default function App() {
         }
 
         if (!supabaseUserId) {
-          supabaseUserId = await getSupabaseUserId();
+          supabaseUserId = await ensureSupabaseSession(user.email, user.name);
         }
 
         if (supabaseUserId) {
@@ -730,7 +813,7 @@ export default function App() {
 
     // --- 2. ASYNC DATABASE OPERATION (IN BACKGROUND) ---
     try {
-      const supabaseUserId = await getSupabaseUserId();
+      const supabaseUserId = await ensureSupabaseSession(user.email, user.name);
       if (!supabaseUserId) {
         console.error("Authentication expired or failed to establish Supabase session.");
         setLoginError("Authentication session expired. Please sign in again.");
@@ -788,7 +871,6 @@ export default function App() {
                 : c
             )
           );
-          setBookmarkCounts((prev) => ({ ...prev, [code]: count }));
         }
       } catch (countErr) {
         console.warn("Error fetching count in background:", countErr);
@@ -806,48 +888,54 @@ export default function App() {
     const updatedUser = { ...user, idNo: newIdNo };
     setUser(updatedUser);
     localStorage.setItem("student_id_" + user.email, newIdNo);
+    localStorage.setItem("bits_user", JSON.stringify(updatedUser));
   };
+
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem("bits_user", JSON.stringify(user));
+      localStorage.removeItem("bits_user_logged_out");
+    } else {
+      localStorage.removeItem("bits_user");
+    }
+  }, [user]);
 
   // Load initial session and set up onAuthStateChange
   useEffect(() => {
-    const syncUserFromSession = async (session: any) => {
-      const authenticatedUser = getAuthenticatedUserFromSession(session);
-      const supabaseUserId = session?.user?.id ?? null;
-      setCurrentSupabaseUserId(supabaseUserId);
-      if (authenticatedUser) {
-        setUser(authenticatedUser);
-        setLoginError("");
-        setShowLoginModal(false);
-      } else {
-        setUser(null);
-        if (session?.user) {
-          try {
-            await supabase.auth.signOut();
-          } catch (e) {
-            console.warn("Failed to sign out disallowed user:", e);
-          }
-          setLoginError("Access restricted: please sign in with your @goa.bits-pilani.ac.in address.");
-          setShowLoginModal(true);
-        }
-      }
-    };
-
     const initAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      await syncUserFromSession(session);
+      if (session?.user) {
+        const email = session.user.email || "anonymous@goa.bits-pilani.ac.in";
+        const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
+        const savedId = localStorage.getItem("student_id_" + email);
+        setUser({
+          email,
+          name,
+          campus: email.toLowerCase().endsWith("@goa.bits-pilani.ac.in") ? "Goa" : "Pilani",
+          idNo: savedId || "-",
+        });
+      }
     };
-
     initAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "SIGNED_OUT" || !session?.user) {
-        setUser(null);
-        setCurrentSupabaseUserId(null);
-        setLoginError("");
-        return;
+      if (session?.user) {
+        const email = session.user.email || "anonymous@goa.bits-pilani.ac.in";
+        const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
+        const savedId = localStorage.getItem("student_id_" + email);
+        setUser({
+          email,
+          name,
+          campus: email.toLowerCase().endsWith("@goa.bits-pilani.ac.in") ? "Goa" : "Pilani",
+          idNo: savedId || "-",
+        });
+      } else {
+        if (event === "SIGNED_OUT") {
+          setUser(null);
+          localStorage.setItem("bits_user_logged_out", "true");
+          localStorage.removeItem("bits_user");
+        }
       }
-
-      await syncUserFromSession(session);
     });
 
     return () => {
@@ -859,22 +947,31 @@ export default function App() {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const origin = event.origin;
-      // Accept messages from the same origin (production) or localhost during development
-      if (origin !== window.location.origin && !origin.includes("localhost")) {
+      if (!origin.endsWith(".run.app") && !origin.includes("localhost")) {
         return;
       }
       if (event.data?.type === "SUPABASE_AUTH_SUCCESS") {
         supabase.auth.getSession().then(({ data: { session } }) => {
-          const authenticatedUser = getAuthenticatedUserFromSession(session);
-          if (authenticatedUser) {
-            setUser(authenticatedUser);
-            setLoginError("");
-            setShowLoginModal(false);
-          } else {
-            supabase.auth.signOut();
-            setUser(null);
-            setLoginError("Access is restricted to @goa.bits-pilani.ac.in email addresses.");
-            setShowLoginModal(true);
+          if (session?.user) {
+            const email = session.user.email || "";
+            const isAllowed = email.toLowerCase().endsWith("@goa.bits-pilani.ac.in") || email.toLowerCase().endsWith("@gmail.com");
+            if (!isAllowed) {
+              supabase.auth.signOut();
+              setUser(null);
+              setLoginError("Access is restricted to @goa.bits-pilani.ac.in or @gmail.com BITS Mail addresses.");
+              setShowLoginModal(true);
+            } else {
+              const { name } = getBitsIdAndName(email, session.user.user_metadata?.full_name);
+              const savedId = localStorage.getItem("student_id_" + email);
+              setUser({
+                email,
+                name,
+                campus: "Goa",
+                idNo: savedId || "-",
+              });
+              setLoginError("");
+              setShowLoginModal(false);
+            }
           }
         });
       }
@@ -935,10 +1032,6 @@ export default function App() {
     setReviewToDeleteId(reviewId);
   };
 
-  const handleDeleteProjectReview = (projectId: string | number) => {
-    setProjectToDeleteId(projectId);
-  };
-
   // Perform actual deletion from Supabase and update local state immediately
   const executeDeleteReview = async (reviewId: string) => {
     const reviewToDelete = reviews.find((r) => r.id === reviewId);
@@ -953,7 +1046,7 @@ export default function App() {
     let supabaseUserId: string | null = null;
     if (user) {
       try {
-        supabaseUserId = await getSupabaseUserId();
+        supabaseUserId = await ensureSupabaseSession(user.email, user.name);
       } catch (authErr) {
         console.warn("Could not ensure Supabase session on delete:", authErr);
       }
@@ -986,9 +1079,9 @@ export default function App() {
           const grades = courseReviews.map((r) => r.gradeReceived).filter(g => g && g !== "—");
           const commonGrade = grades.length > 0
             ? grades.sort(
-              (a, b) =>
-                grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
-            ).pop()
+                (a, b) =>
+                  grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
+              ).pop()
             : undefined;
 
           // Simple average marks extraction
@@ -1024,9 +1117,9 @@ export default function App() {
         const grades = courseReviews.map((r) => r.gradeReceived).filter(g => g && g !== "—");
         const commonGrade = grades.length > 0
           ? grades.sort(
-            (a, b) =>
-              grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
-          ).pop()
+              (a, b) =>
+                grades.filter((v) => v === a).length - grades.filter((v) => v === b).length
+            ).pop()
           : undefined;
 
         const numericMarks = courseReviews
@@ -1064,35 +1157,6 @@ export default function App() {
       }
     } catch (err) {
       console.warn("Supabase delete failed, falling back to local state:", err);
-    }
-  };
-
-  const executeDeleteProjectReview = async (projectId: string | number) => {
-    const projectToDelete = projects.find((project) => String(project.id) === String(projectId));
-    if (!projectToDelete) return;
-
-    const isOwnProject = Boolean(currentSupabaseUserId && projectToDelete.user_id === currentSupabaseUserId);
-    if (!isOwnProject) {
-      console.error("Unauthorized project deletion attempt.");
-      return;
-    }
-
-    setProjects((prevProjects) => prevProjects.filter((project) => String(project.id) !== String(projectId)));
-
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .delete()
-        .eq("id", projectId)
-        .eq("user_id", currentSupabaseUserId);
-
-      if (error) {
-        console.error("Error deleting project review from Supabase:", error.message, error.details || "", error.hint || "");
-      } else {
-        console.log("Successfully deleted project review from Supabase:", projectId);
-      }
-    } catch (err) {
-      console.warn("Supabase project delete failed, falling back to local state:", err);
     }
   };
 
@@ -1177,7 +1241,7 @@ export default function App() {
           if (c.id === courseId) {
             // Recalculate based on the updated list of reviews
             const courseReviews = reviews.map((r) => (r.id === newReview.id ? updatedReview : r)).filter((r) => r.courseId === c.id);
-
+            
             const grades = courseReviews.map((r) => r.gradeReceived);
             const commonGrade = grades.sort(
               (a, b) =>
@@ -1319,10 +1383,7 @@ export default function App() {
   };
 
   // Handle Project Submission
-  const handleSubmitProject = async (
-    projectData: Omit<Project, "id" | "created_at">,
-    projectToEdit?: Project | null
-  ): Promise<boolean> => {
+  const handleSubmitProject = async (projectData: Omit<Project, "id" | "created_at">): Promise<boolean> => {
     let supabaseUserId: string | null = null;
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -1337,51 +1398,13 @@ export default function App() {
       project_info: projectData.project_info,
       student_branch: projectData.student_branch,
       prof_branch: projectData.prof_branch,
+      project_type: projectData.project_type,
       domain: projectData.domain,
       type: projectData.type,
       taken_in: projectData.taken_in,
       experience: projectData.experience,
-      grade_rece: projectData.grade_rece,
       user_id: supabaseUserId,
     };
-
-    if (projectToEdit) {
-      const isOwnProject = Boolean(supabaseUserId && projectToEdit.user_id === supabaseUserId);
-      if (!isOwnProject) {
-        console.error("Unauthorized project edit attempt.");
-        return false;
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("projects")
-          .update(dbRow)
-          .eq("id", projectToEdit.id)
-          .eq("user_id", supabaseUserId)
-          .select()
-          .single();
-
-        if (error) {
-          console.error("Error updating project review in Supabase:", error.message);
-          return false;
-        }
-
-        const updatedProject: Project = {
-          ...projectToEdit,
-          ...projectData,
-          id: projectToEdit.id,
-          user_id: supabaseUserId || projectToEdit.user_id,
-          created_at: data?.created_at || projectToEdit.created_at,
-        };
-
-        setProjects((prev) => prev.map((project) => (String(project.id) === String(projectToEdit.id) ? updatedProject : project)));
-        setProjectToEdit(null);
-        return true;
-      } catch (err) {
-        console.warn("Supabase project update failed, falling back to local state:", err);
-        return false;
-      }
-    }
 
     let insertedProject: any = null;
     try {
@@ -1407,11 +1430,11 @@ export default function App() {
       project_info: projectData.project_info,
       student_branch: projectData.student_branch,
       prof_branch: projectData.prof_branch,
+      project_type: projectData.project_type,
       domain: projectData.domain,
       type: projectData.type,
       taken_in: projectData.taken_in,
       experience: projectData.experience,
-      grade_rece: projectData.grade_rece,
       user_id: supabaseUserId || undefined,
       created_at: insertedProject?.created_at || new Date().toISOString(),
     };
@@ -1476,10 +1499,10 @@ export default function App() {
         const matchingDelDRows = delDMappings.filter((d) => {
           return (d.branch_dep || "").trim().toUpperCase() === filterDept.trim().toUpperCase();
         });
-
+        
         // Retrieve corresponding course_code values
         const fetchedCourseCodes = matchingDelDRows.map((d) => (d.course_code || "").trim().toUpperCase());
-
+        
         // Temporary log: fetched course codes from del_d
         console.log("fetched course codes from del_d:", fetchedCourseCodes);
 
@@ -1594,14 +1617,7 @@ export default function App() {
     }
   }, [selectedCategory, filterDept, delDMappings, courses, searchQuery]);
 
-  const userProjectReviews = useMemo(() => {
-    if (!currentSupabaseUserId) return [];
-    return projects.filter((project) => project.user_id === currentSupabaseUserId);
-  }, [projects, currentSupabaseUserId]);
-
-  const isAuthCallbackRoute = window.location.pathname === "/auth-callback" || window.location.pathname === "/auth-callback/";
-
-  if (isAuthCallbackRoute) {
+  if (window.location.pathname === "/auth-callback" || window.location.pathname === "/auth-callback/") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-app-bg text-app-text-primary">
         <div className="text-center p-8 space-y-4 rounded-3xl border border-app-border bg-app-surface shadow-lg max-w-sm mx-4">
@@ -1613,534 +1629,503 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-app-bg text-app-text-primary flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md">
-          <LoginView
-            parentError={loginError}
-            onLoginSuccess={() => {
-              setLoginError("");
-              setShowLoginModal(false);
-            }}
-            onClose={() => {
-              setLoginError("");
-              setShowLoginModal(false);
-            }}
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <BookmarkCountsContext.Provider value={{ bookmarkCounts }}>
-      <div className="min-h-screen bg-app-bg text-app-text-primary flex flex-col font-sans transition-colors duration-200">
-        {/* Main Header */}
-        <Header
-          activePage={activePage}
-          setActivePage={(page) => {
-            if (page === "submit-review") {
-              setSubmitReviewInitialCategory("HEL");
-            }
-            setActivePage(page);
-            setReviewToEdit(null);
-            if (page === "home") setSelectedCategory(null);
-          }}
-          user={user}
-          onLogout={async () => {
-            await supabase.auth.signOut();
-            setUser(null);
-            setActivePage("home");
-          }}
-          onLoginClick={() => {
-            setLoginError("");
-            setShowLoginModal(true);
-          }}
-          theme={theme}
-          onToggleTheme={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-        />
+    <div className="min-h-screen bg-app-bg text-app-text-primary flex flex-col font-sans transition-colors duration-200">
+      {/* Main Header */}
+      <Header
+        activePage={activePage}
+        setActivePage={(page) => {
+          if (page === "submit-review") {
+            setSubmitReviewInitialCategory("HEL");
+          }
+          setActivePage(page);
+          setReviewToEdit(null);
+          if (page === "home") setSelectedCategory(null);
+        }}
+        user={user}
+        onLogout={async () => {
+          await supabase.auth.signOut();
+          setUser(null);
+          localStorage.setItem("bits_user_logged_out", "true");
+          localStorage.removeItem("bits_user");
+          setActivePage("home");
+        }}
+        onLoginClick={() => {
+          setLoginError("");
+          setShowLoginModal(true);
+        }}
+        theme={theme}
+        onToggleTheme={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+      />
 
-        {/* Content Canvas */}
-        <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-          <AnimatePresence mode="wait">
-            {/* LOGIN MODAL OVERLAY */}
-            {showLoginModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                <div
-                  className="absolute inset-0 bg-black/60 backdrop-blur-md"
-                  onClick={() => {
+      {/* Content Canvas */}
+      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        <AnimatePresence mode="wait">
+          {/* LOGIN MODAL OVERLAY */}
+          {showLoginModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <div
+                className="absolute inset-0 bg-black/60 backdrop-blur-md"
+                onClick={() => {
+                  setLoginError("");
+                  setShowLoginModal(false);
+                }}
+              />
+              <div className="relative z-10 w-full max-w-md">
+                <LoginView
+                  parentError={loginError}
+                  onLoginSuccess={(authenticatedUser) => {
+                    const savedId = localStorage.getItem("student_id_" + authenticatedUser.email);
+                    const updatedUser = {
+                      ...authenticatedUser,
+                      idNo: savedId || "-",
+                    };
+                    setUser(updatedUser);
+                    localStorage.setItem("bits_user", JSON.stringify(updatedUser));
+                    setLoginError("");
+                    setShowLoginModal(false);
+                  }}
+                  onClose={() => {
                     setLoginError("");
                     setShowLoginModal(false);
                   }}
                 />
-                <div className="relative z-10 w-full max-w-md">
-                  <LoginView
-                    parentError={loginError}
-                    onLoginSuccess={() => {
-                      setLoginError("");
-                      setShowLoginModal(false);
+              </div>
+            </div>
+          )}
+
+          {/* PAGE: Home (Category Selection) */}
+          {activePage === "home" && (
+            <motion.div
+              key="home-page"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <CategorySelection
+                onSelectCategory={handleSelectCategory}
+                setActivePage={(page) => {
+                  if (page === "submit-review") {
+                    setSubmitReviewInitialCategory("HEL");
+                  }
+                  setActivePage(page);
+                }}
+              />
+            </motion.div>
+          )}
+
+          {/* PAGE: Browse Courses */}
+          {activePage === "browse" && (
+            <motion.div
+              key="browse-page"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="space-y-8 py-4"
+            >
+              {/* Category Breadcrumb & Selector Toggle */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-app-border pb-4">
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-app-text-secondary">
+                    <button
+                      onClick={() => {
+                        setActivePage("home");
+                        setSelectedCategory(null);
+                      }}
+                      className="hover:text-app-text-primary transition-colors"
+                    >
+                      Categories
+                    </button>
+                    <span>/</span>
+                    <span className="text-app-text-primary">
+                      {selectedCategory === "HEL" ? "Humanities Electives" : "Open/Discipline Electives"}
+                    </span>
+                  </div>
+                  <h1 className="font-sans text-3xl font-extrabold tracking-tight text-app-text-primary mt-1">
+                    Browse Electives
+                  </h1>
+                </div>
+
+                {/* Sub-Category Toggle pills */}
+                <div className="flex bg-app-bg p-1 rounded-xl border border-app-border">
+                  <button
+                    onClick={() => setSelectedCategory("HEL")}
+                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                      selectedCategory === "HEL"
+                        ? "bg-app-accent text-white shadow-sm"
+                        : "text-app-text-secondary hover:text-app-text-primary"
+                    }`}
+                  >
+                    Humanities (HEL)
+                  </button>
+                  <button
+                    onClick={() => setSelectedCategory("OPEL_DEL")}
+                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                      selectedCategory === "OPEL_DEL"
+                        ? "bg-app-accent text-white shadow-sm"
+                        : "text-app-text-secondary hover:text-app-text-primary"
+                    }`}
+                  >
+                    Open & Discipline
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActivePage("projects");
                     }}
-                    onClose={() => {
-                      setLoginError("");
-                      setShowLoginModal(false);
-                    }}
-                  />
+                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                      activePage === "projects"
+                        ? "bg-app-accent text-white shadow-sm"
+                        : "text-app-text-secondary hover:text-app-text-primary"
+                    }`}
+                  >
+                    Projects
+                  </button>
                 </div>
               </div>
-            )}
 
-            {/* PAGE: Home (Category Selection) */}
-            {activePage === "home" && (
-              <motion.div
-                key="home-page"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                <CategorySelection
-                  onSelectCategory={handleSelectCategory}
-                  setActivePage={(page) => {
-                    if (page === "submit-review") {
-                      setSubmitReviewInitialCategory("HEL");
-                    }
-                    setActivePage(page);
-                  }}
-                />
-              </motion.div>
-            )}
+              {/* Giant search / filters block */}
+              <div className="grid gap-4 md:grid-cols-12 items-center">
+                {/* Search input container */}
+                <div className="relative md:col-span-6 lg:col-span-8">
+                  <Search className="absolute left-4 top-3.5 h-5 w-5 text-app-text-secondary/60" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search by course code, name, instructor or abbreviation..."
+                    className="w-full rounded-2xl border border-app-border bg-app-surface py-3.5 pl-11.5 pr-4 text-sm text-app-text-primary placeholder:text-app-text-secondary/40 focus:border-app-accent focus:outline-none focus:ring-1 focus:ring-app-accent"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-4 top-3.5 text-xs text-app-text-secondary hover:text-app-text-primary"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
 
-            {/* PAGE: Browse Courses */}
-            {activePage === "browse" && (
-              <motion.div
-                key="browse-page"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-                className="space-y-8 py-4"
-              >
-                {/* Category Breadcrumb & Selector Toggle */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-app-border pb-4">
-                  <div>
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-app-text-secondary">
-                      <button
-                        onClick={() => {
-                          setActivePage("home");
-                          setSelectedCategory(null);
-                        }}
-                        className="hover:text-app-text-primary transition-colors"
-                      >
-                        Categories
-                      </button>
-                      <span>/</span>
-                      <span className="text-app-text-primary">
-                        {selectedCategory === "HEL" ? "Humanities Electives" : "Open/Discipline Electives"}
+                {/* Sort dropdown */}
+                <div className="relative md:col-span-3 lg:col-span-2">
+                  <button
+                    onClick={() => {
+                      setIsSortOpen(!isSortOpen);
+                      setIsFilterOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
+                  >
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="h-4 w-4 text-zinc-400" />
+                      <span>
+                        Sort: {sortOption === "reviews" ? "Reviews" : sortOption === "name" ? "Name" : sortOption === "code" ? "Code" : "Grade"}
                       </span>
                     </div>
-                    <h1 className="font-sans text-3xl font-extrabold tracking-tight text-app-text-primary mt-1">
-                      Browse Electives
-                    </h1>
-                  </div>
+                    <ChevronDown className={`h-4 w-4 text-zinc-500 transition-transform ${isSortOpen ? "rotate-180" : ""}`} />
+                  </button>
 
-                  {/* Sub-Category Toggle pills */}
-                  <div className="flex bg-app-bg p-1 rounded-xl border border-app-border">
-                    <button
-                      onClick={() => setSelectedCategory("HEL")}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${selectedCategory === "HEL"
-                          ? "bg-app-accent text-white shadow-sm"
-                          : "text-app-text-secondary hover:text-app-text-primary"
-                        }`}
-                    >
-                      Humanities (HEL)
-                    </button>
-                    <button
-                      onClick={() => setSelectedCategory("OPEL_DEL")}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${selectedCategory === "OPEL_DEL"
-                          ? "bg-app-accent text-white shadow-sm"
-                          : "text-app-text-secondary hover:text-app-text-primary"
-                        }`}
-                    >
-                      Open & Discipline
-                    </button>
-                    <button
-                      onClick={() => {
-                        setActivePage("projects");
-                      }}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${activePage === "projects"
-                          ? "bg-app-accent text-white shadow-sm"
-                          : "text-app-text-secondary hover:text-app-text-primary"
-                        }`}
-                    >
-                      Projects
-                    </button>
-                  </div>
-                </div>
-
-                {/* Giant search / filters block */}
-                <div className="grid gap-4 md:grid-cols-12 items-center">
-                  {/* Search input container */}
-                  <div className="relative md:col-span-6 lg:col-span-8">
-                    <Search className="absolute left-4 top-3.5 h-5 w-5 text-app-text-secondary/60" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search by course code, name, instructor or abbreviation..."
-                      className="w-full rounded-2xl border border-app-border bg-app-surface py-3.5 pl-11.5 pr-4 text-sm text-app-text-primary placeholder:text-app-text-secondary/40 focus:border-app-accent focus:outline-none focus:ring-1 focus:ring-app-accent"
-                    />
-                    {searchQuery && (
-                      <button
-                        onClick={() => setSearchQuery("")}
-                        className="absolute right-4 top-3.5 text-xs text-app-text-secondary hover:text-app-text-primary"
+                  <AnimatePresence>
+                    {isSortOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 5 }}
+                        className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md"
                       >
-                        Clear
-                      </button>
+                        {[
+                          { key: "reviews", label: "Most Reviews" },
+                          { key: "name", label: "Course Name (A-Z)" },
+                          { key: "code", label: "Course Code (A-Z)" },
+                          { key: "grade", label: "Average Grade (A-C)" },
+                        ].map((opt) => (
+                          <button
+                            key={opt.key}
+                            onClick={() => {
+                              setSortOption(opt.key as any);
+                              setIsSortOpen(false);
+                            }}
+                            className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
+                              sortOption === opt.key ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </motion.div>
                     )}
-                  </div>
-
-                  {/* Sort dropdown */}
-                  <div className="relative md:col-span-3 lg:col-span-2">
-                    <button
-                      onClick={() => {
-                        setIsSortOpen(!isSortOpen);
-                        setIsFilterOpen(false);
-                      }}
-                      className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
-                    >
-                      <div className="flex items-center gap-2">
-                        <SlidersHorizontal className="h-4 w-4 text-zinc-400" />
-                        <span>
-                          Sort: {sortOption === "reviews" ? "Reviews" : sortOption === "name" ? "Name" : sortOption === "code" ? "Code" : "Grade"}
-                        </span>
-                      </div>
-                      <ChevronDown className={`h-4 w-4 text-zinc-500 transition-transform ${isSortOpen ? "rotate-180" : ""}`} />
-                    </button>
-
-                    <AnimatePresence>
-                      {isSortOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 5 }}
-                          className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md"
-                        >
-                          {[
-                            { key: "reviews", label: "Most Reviews" },
-                            { key: "name", label: "Course Name (A-Z)" },
-                            { key: "code", label: "Course Code (A-Z)" },
-                            { key: "grade", label: "Average Grade (A-C)" },
-                          ].map((opt) => (
-                            <button
-                              key={opt.key}
-                              onClick={() => {
-                                setSortOption(opt.key as any);
-                                setIsSortOpen(false);
-                              }}
-                              className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${sortOption === opt.key ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
-                                }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-
-                  {/* Filter dropdown */}
-                  <div className="relative md:col-span-3 lg:col-span-2">
-                    <button
-                      onClick={() => {
-                        setIsFilterOpen(!isFilterOpen);
-                        setIsSortOpen(false);
-                      }}
-                      className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Filter className="h-4 w-4 text-app-text-secondary/60" />
-                        <span>Filter: {filterDept === "all" ? "All" : filterDept}</span>
-                      </div>
-                      <ChevronDown className={`h-4 w-4 text-app-text-secondary/60 transition-transform ${isFilterOpen ? "rotate-180" : ""}`} />
-                    </button>
-
-                    <AnimatePresence>
-                      {isFilterOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 5 }}
-                          className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md max-h-60 overflow-y-auto"
-                        >
-                          {["all", ...distinctDepartments].map((dept) => (
-                            <button
-                              key={dept}
-                              onClick={() => {
-                                setFilterDept(dept);
-                                setIsFilterOpen(false);
-                              }}
-                              className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${filterDept === dept ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
-                                }`}
-                            >
-                              {dept === "all" ? "All Departments" : dept}
-                            </button>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
+                  </AnimatePresence>
                 </div>
 
-                {/* Course Card Grid results */}
-                {filteredAndSortedCourses.length === 0 ? (
-                  <div className="rounded-3xl border border-app-border bg-app-surface p-16 text-center shadow-sm">
-                    <AlertCircle className="h-10 w-10 text-app-text-secondary/60 mx-auto mb-3.5" />
-                    <p className="text-sm text-app-text-primary font-bold">
-                      No electives matched your criteria
-                    </p>
-                    <p className="text-xs text-app-text-secondary mt-1 max-w-sm mx-auto">
-                      Try clearing search queries or removing average grade filters to browse all electives.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                    {filteredAndSortedCourses.map((course) => {
-                      const courseReviews = reviews.filter((r) => r.courseId === course.id);
-                      return (
-                        <CourseCard
-                          key={course.id}
-                          course={course}
-                          reviewCount={course.reviewCount !== undefined ? course.reviewCount : courseReviews.length}
-                          isBookmarked={bookmarks.includes(course.id) || bookmarks.includes(course.code)}
-                          onToggleBookmark={handleToggleBookmark}
-                          onClick={() => {
-                            setSelectedCourse(course);
-                            setActivePage("course-details");
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-              </motion.div>
-            )}
+                {/* Filter dropdown */}
+                <div className="relative md:col-span-3 lg:col-span-2">
+                  <button
+                    onClick={() => {
+                      setIsFilterOpen(!isFilterOpen);
+                      setIsSortOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between rounded-2xl border border-app-border bg-app-surface px-4 py-3.5 text-sm font-semibold text-app-text-primary hover:bg-app-bg focus:outline-none"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-app-text-secondary/60" />
+                      <span>Filter: {filterDept === "all" ? "All" : filterDept}</span>
+                    </div>
+                    <ChevronDown className={`h-4 w-4 text-app-text-secondary/60 transition-transform ${isFilterOpen ? "rotate-180" : ""}`} />
+                  </button>
 
-            {/* PAGE: Course Details */}
-            {activePage === "course-details" && selectedCourse && (
-              <motion.div
-                key="details-page"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-              >
-                <CourseDetails
-                  course={selectedCourse}
-                  reviews={currentCourseReviews.length > 0 ? currentCourseReviews : reviews.filter((r) => r.courseId === selectedCourse.id)}
-                  isBookmarked={bookmarks.includes(selectedCourse.id) || bookmarks.includes(selectedCourse.code)}
-                  onToggleBookmark={handleToggleBookmarkDirect}
-                  onBack={() => {
-                    setActivePage("browse");
-                  }}
-                  onOpenReviewModal={handleOpenReviewModal}
-                />
-              </motion.div>
-            )}
-
-            {/* PAGE: Submit a Review */}
-            {activePage === "submit-review" && (
-              <motion.div
-                key="submit-page"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-              >
-                <SubmitReview
-                  user={user}
-                  courses={courses}
-                  onSubmitReview={handleAddReview}
-                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                  reviewToEdit={reviewToEdit}
-                  onCancelEdit={() => {
-                    setReviewToEdit(null);
-                    setActivePage("profile");
-                  }}
-                  onProjectsClick={() => {
-                    setSubmitReviewInitialCategory("projects");
-                    setReviewToEdit(null);
-                    setActivePage("submit-review");
-                  }}
-                  onSubmitProject={handleSubmitProject}
-                  projectToEdit={projectToEdit}
-                  onSuccessProjectReturn={() => {
-                    setProjectToEdit(null);
-                    setActivePage(projectToEdit ? "profile" : "projects");
-                  }}
-                  initialCategory={submitReviewInitialCategory}
-                />
-              </motion.div>
-            )}
-
-            {/* PAGE: Bookmarks View */}
-            {activePage === "bookmarks" && (
-              <motion.div
-                key="bookmarks-page"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-              >
-                <BookmarksView
-                  user={user}
-                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                  courses={courses}
-                  bookmarks={bookmarks}
-                  reviews={reviews}
-                  onToggleBookmark={handleToggleBookmark}
-                  onSelectCourse={(course) => {
-                    setSelectedCourse(course);
-                    setActivePage("course-details");
-                  }}
-                  onExploreClick={() => {
-                    setSelectedCategory("HEL");
-                    setActivePage("browse");
-                  }}
-                />
-              </motion.div>
-            )}
-
-            {/* PAGE: Profile View */}
-            {activePage === "profile" && (
-              <motion.div
-                key="profile-page"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-              >
-                <ProfileView
-                  user={user}
-                  reviews={reviews}
-                  courses={courses}
-                  bookmarks={bookmarks}
-                  onSelectCourse={(course) => {
-                    setSelectedCourse(course);
-                    setActivePage("course-details");
-                  }}
-                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                  onDeleteReview={handleDeleteReview}
-                  onEditReview={(review) => {
-                    setReviewToEdit(review);
-                    setProjectToEdit(null);
-                    setActivePage("submit-review");
-                  }}
-                  onDeleteProjectReview={handleDeleteProjectReview}
-                  onEditProjectReview={(project) => {
-                    setProjectToEdit(project);
-                    setReviewToEdit(null);
-                    setSubmitReviewInitialCategory("projects");
-                    setActivePage("submit-review");
-                  }}
-                  projectReviews={userProjectReviews}
-                  currentUserId={currentSupabaseUserId}
-                  onUpdateStudentId={handleUpdateStudentId}
-                />
-              </motion.div>
-            )}
-
-            {/* PAGE: Projects Feed */}
-            {activePage === "projects" && (
-              <motion.div
-                key="projects-page"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-              >
-                <ProjectsView
-                  projects={projects}
-                  user={user}
-                  onAddReviewClick={() => {
-                    setSubmitReviewInitialCategory("projects");
-                    setReviewToEdit(null);
-                    setActivePage("submit-review");
-                  }}
-                  onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
-                  onHomeClick={() => setActivePage("home")}
-                  onSelectCategory={(category) => {
-                    setSelectedCategory(category);
-                    setActivePage("browse");
-                  }}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </main>
-
-        {/* Verified Detailed Review Modal Popup */}
-        <ReviewModal
-          isOpen={isReviewModalOpen}
-          onClose={() => setIsReviewModalOpen(false)}
-          review={activeReviewModal}
-          course={selectedCourse}
-          reviewIndex={reviewModalIndex}
-        />
-
-        {/* Confirmation Modal for deleting review or project review */}
-        {(reviewToDeleteId || projectToDeleteId) && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface p-6 shadow-2xl">
-              <h3 className="font-sans text-lg font-bold text-app-text-primary">
-                {projectToDeleteId ? "Delete Project Review" : "Delete Review"}
-              </h3>
-              <p className="mt-3 text-sm leading-relaxed text-app-text-secondary font-sans">
-                Are you sure you want to delete this {projectToDeleteId ? "project review" : "review"}? This action cannot be undone.
-              </p>
-              <div className="mt-6 flex items-center justify-end gap-3">
-                <button
-                  onClick={() => {
-                    setReviewToDeleteId(null);
-                    setProjectToDeleteId(null);
-                  }}
-                  className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text-primary hover:bg-app-bg transition-colors font-sans"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    if (projectToDeleteId) {
-                      const id = projectToDeleteId;
-                      setProjectToDeleteId(null);
-                      executeDeleteProjectReview(id);
-                    } else if (reviewToDeleteId) {
-                      const id = reviewToDeleteId;
-                      setReviewToDeleteId(null);
-                      executeDeleteReview(id);
-                    }
-                  }}
-                  className="rounded-xl bg-app-error px-4 py-2 text-sm font-semibold text-white hover:bg-app-error/90 transition-all font-sans"
-                >
-                  Delete
-                </button>
+                  <AnimatePresence>
+                    {isFilterOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 5 }}
+                        className="absolute z-30 mt-2 w-full rounded-xl border border-app-border bg-app-surface p-1.5 shadow-md max-h-60 overflow-y-auto"
+                      >
+                        {["all", ...distinctDepartments].map((dept) => (
+                          <button
+                            key={dept}
+                            onClick={() => {
+                              setFilterDept(dept);
+                              setIsFilterOpen(false);
+                            }}
+                            className={`w-full text-left rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
+                              filterDept === dept ? "bg-app-accent text-white" : "text-app-text-secondary hover:text-app-text-primary hover:bg-app-bg"
+                            }`}
+                          >
+                            {dept === "all" ? "All Departments" : dept}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
+
+              {/* Course Card Grid results */}
+              {filteredAndSortedCourses.length === 0 ? (
+                <div className="rounded-3xl border border-app-border bg-app-surface p-16 text-center shadow-sm">
+                  <AlertCircle className="h-10 w-10 text-app-text-secondary/60 mx-auto mb-3.5" />
+                  <p className="text-sm text-app-text-primary font-bold">
+                    No electives matched your criteria
+                  </p>
+                  <p className="text-xs text-app-text-secondary mt-1 max-w-sm mx-auto">
+                    Try clearing search queries or removing average grade filters to browse all electives.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                  {filteredAndSortedCourses.map((course) => {
+                    const courseReviews = reviews.filter((r) => r.courseId === course.id);
+                    return (
+                      <CourseCard
+                        key={course.id}
+                        course={course}
+                        reviewCount={course.reviewCount !== undefined ? course.reviewCount : courseReviews.length}
+                        isBookmarked={bookmarks.includes(course.id) || bookmarks.includes(course.code)}
+                        onToggleBookmark={handleToggleBookmark}
+                        onClick={() => {
+                          setSelectedCourse(course);
+                          setActivePage("course-details");
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* PAGE: Course Details */}
+          {activePage === "course-details" && selectedCourse && (
+            <motion.div
+              key="details-page"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+            >
+              <CourseDetails
+                course={selectedCourse}
+                reviews={currentCourseReviews.length > 0 ? currentCourseReviews : reviews.filter((r) => r.courseId === selectedCourse.id)}
+                isBookmarked={bookmarks.includes(selectedCourse.id) || bookmarks.includes(selectedCourse.code)}
+                onToggleBookmark={handleToggleBookmarkDirect}
+                onBack={() => {
+                  setActivePage("browse");
+                }}
+                onOpenReviewModal={handleOpenReviewModal}
+              />
+            </motion.div>
+          )}
+
+          {/* PAGE: Submit a Review */}
+          {activePage === "submit-review" && (
+            <motion.div
+              key="submit-page"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+            >
+              <SubmitReview
+                user={user}
+                courses={courses}
+                onSubmitReview={handleAddReview}
+                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                reviewToEdit={reviewToEdit}
+                onCancelEdit={() => {
+                  setReviewToEdit(null);
+                  setActivePage("profile");
+                }}
+                onProjectsClick={() => {
+                  setSubmitReviewInitialCategory("projects");
+                  setReviewToEdit(null);
+                  setActivePage("submit-review");
+                }}
+                onSubmitProject={handleSubmitProject}
+                onSuccessProjectReturn={() => setActivePage("projects")}
+                initialCategory={submitReviewInitialCategory}
+              />
+            </motion.div>
+          )}
+
+          {/* PAGE: Bookmarks View */}
+          {activePage === "bookmarks" && (
+            <motion.div
+              key="bookmarks-page"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+            >
+              <BookmarksView
+                user={user}
+                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                courses={courses}
+                bookmarks={bookmarks}
+                reviews={reviews}
+                onToggleBookmark={handleToggleBookmark}
+                onSelectCourse={(course) => {
+                  setSelectedCourse(course);
+                  setActivePage("course-details");
+                }}
+                onExploreClick={() => {
+                  setSelectedCategory("HEL");
+                  setActivePage("browse");
+                }}
+              />
+            </motion.div>
+          )}
+
+          {/* PAGE: Profile View */}
+          {activePage === "profile" && (
+            <motion.div
+              key="profile-page"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+            >
+              <ProfileView
+                user={user}
+                reviews={reviews}
+                courses={courses}
+                bookmarks={bookmarks}
+                onSelectCourse={(course) => {
+                  setSelectedCourse(course);
+                  setActivePage("course-details");
+                }}
+                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                onDeleteReview={handleDeleteReview}
+                onEditReview={(review) => {
+                  setReviewToEdit(review);
+                  setActivePage("submit-review");
+                }}
+                onUpdateStudentId={handleUpdateStudentId}
+              />
+            </motion.div>
+          )}
+
+          {/* PAGE: Projects Feed */}
+          {activePage === "projects" && (
+            <motion.div
+              key="projects-page"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+            >
+              <ProjectsView
+                projects={projects}
+                user={user}
+                onAddReviewClick={() => {
+                  setSubmitReviewInitialCategory("projects");
+                  setReviewToEdit(null);
+                  setActivePage("submit-review");
+                }}
+                onLoginClick={() => { setLoginError(""); setShowLoginModal(true); }}
+                onHomeClick={() => setActivePage("home")}
+                onSelectCategory={(category) => {
+                  setSelectedCategory(category);
+                  setActivePage("browse");
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+
+      {/* Verified Detailed Review Modal Popup */}
+      <ReviewModal
+        isOpen={isReviewModalOpen}
+        onClose={() => setIsReviewModalOpen(false)}
+        review={activeReviewModal}
+        course={selectedCourse}
+        reviewIndex={reviewModalIndex}
+      />
+
+      {/* Confirmation Modal for deleting review */}
+      {reviewToDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface p-6 shadow-2xl">
+            <h3 className="font-sans text-lg font-bold text-app-text-primary">
+              Delete Review
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-app-text-secondary font-sans">
+              Are you sure you want to delete this review? This action cannot be undone.
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setReviewToDeleteId(null)}
+                className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text-primary hover:bg-app-bg transition-colors font-sans"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const id = reviewToDeleteId;
+                  setReviewToDeleteId(null);
+                  executeDeleteReview(id);
+                }}
+                className="rounded-xl bg-app-error px-4 py-2 text-sm font-semibold text-white hover:bg-app-error/90 transition-all font-sans"
+              >
+                Delete
+              </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Simple Footer */}
-        <footer className="border-t border-app-border bg-app-surface py-6 text-center text-xs text-app-text-secondary">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <span>BITS Course Reviews • Created for the BITSian community</span>
-            <div className="flex gap-4">
-              <button onClick={() => { setSelectedCategory("HEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse HELs</button>
-              <span>•</span>
-              <button onClick={() => { setSelectedCategory("OPEL_DEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse DELs</button>
-              <span>•</span>
-              <button onClick={() => { setReviewToEdit(null); setActivePage("submit-review"); }} className="hover:text-app-text-primary transition-colors">Write a Review</button>
-            </div>
+      {/* Simple Footer */}
+      <footer className="border-t border-app-border bg-app-surface py-6 text-center text-xs text-app-text-secondary">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <span>BITS Course Reviews • Created for the BITSian community</span>
+          <div className="flex gap-4">
+            <button onClick={() => { setSelectedCategory("HEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse HELs</button>
+            <span>•</span>
+            <button onClick={() => { setSelectedCategory("OPEL_DEL"); setActivePage("browse"); }} className="hover:text-app-text-primary transition-colors">Browse DELs</button>
+            <span>•</span>
+            <button onClick={() => { setReviewToEdit(null); setActivePage("submit-review"); }} className="hover:text-app-text-primary transition-colors">Write a Review</button>
           </div>
-        </footer>
+        </div>
+      </footer>
 
-        {/* Scroll to Top Button */}
-        {(activePage === "browse" || activePage === "projects" || activePage === "course-details") && (
-          <ScrollToTop />
-        )}
-      </div>
-    </BookmarkCountsContext.Provider>
+      {/* Scroll to Top Button */}
+      {(activePage === "browse" || activePage === "projects" || activePage === "course-details") && (
+        <ScrollToTop />
+      )}
+    </div>
   );
 }

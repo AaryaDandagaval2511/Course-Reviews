@@ -110,14 +110,6 @@ export default function ProjectsView({
 
   const projectTypesList = ["SOP", "LOP", "DOP", "RC"];
 
-  const hasActiveFilters = Boolean(
-    searchQuery.trim() ||
-    filterDomain !== "all" ||
-    filterDept !== "all" ||
-    filterBranch !== "all" ||
-    filterType !== "all"
-  );
-
   // Handle Search, Filter, and Sort
   const filteredAndSortedProjects = useMemo(() => {
     let result = [...projects];
@@ -147,9 +139,9 @@ export default function ProjectsView({
       result = result.filter((p) => p.student_branch === filterBranch);
     }
 
-    // Filter by Project Type
+    // Filter by Project Type (Match against type, fallback to project_type)
     if (filterType !== "all") {
-      result = result.filter((p) => p.type === filterType);
+      result = result.filter((p) => (p.type === filterType || p.project_type === filterType));
     }
 
     // Sorting options: Latest, Oldest, Professor Name, Project Title
@@ -234,7 +226,7 @@ export default function ProjectsView({
         </div>
 
         {/* Metrics Row (Matches CourseDetails.tsx 4-box layout) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Department */}
           <div className="rounded-2xl border border-app-border bg-app-surface p-5 flex flex-col justify-between shadow-sm">
             <span className="text-[10px] font-bold text-app-text-secondary uppercase tracking-wider font-mono">
@@ -268,10 +260,10 @@ export default function ProjectsView({
           {/* Project Type / Submitted Date */}
           <div className="rounded-2xl border border-app-border bg-app-surface p-5 flex flex-col justify-between shadow-sm">
             <span className="text-[10px] font-bold text-app-text-secondary uppercase tracking-wider font-mono">
-              {selectedProject.type ? "Project Type" : "Submitted Date"}
+              {(selectedProject.type || selectedProject.project_type) ? "Project Type" : "Submitted Date"}
             </span>
             <div className="mt-2 text-sm sm:text-base font-black text-app-text-primary font-sans leading-tight">
-              {selectedProject.type || (selectedProject.created_at ? (
+              {(selectedProject.type || selectedProject.project_type) || (selectedProject.created_at ? (
                 new Date(selectedProject.created_at).toLocaleDateString("en-US", {
                   year: "numeric",
                   month: "short",
@@ -280,16 +272,6 @@ export default function ProjectsView({
               ) : (
                 "Recent"
               ))}
-            </div>
-          </div>
-
-          {/* Grade Received */}
-          <div className="rounded-2xl border border-app-border bg-app-surface p-5 flex flex-col justify-between shadow-sm">
-            <span className="text-[10px] font-bold text-app-text-secondary uppercase tracking-wider font-mono">
-              Grade Received
-            </span>
-            <div className="mt-2 text-sm sm:text-base font-black text-app-text-primary font-sans leading-tight">
-              {selectedProject.grade_rece || "Not specified"}
             </div>
           </div>
         </div>
@@ -601,16 +583,12 @@ export default function ProjectsView({
         <div className="rounded-3xl border border-app-border bg-app-surface p-16 text-center shadow-sm max-w-xl mx-auto space-y-3">
           <FolderGit2 className="h-10 w-10 text-app-text-secondary/60 mx-auto mb-3.5" />
           <p className="text-sm text-app-text-primary font-bold">
-            {projects.length === 0 && !hasActiveFilters
-              ? "No project reviews yet. Be the first to submit one."
-              : "No projects matched your criteria"}
+            No projects matched your criteria
           </p>
           <p className="text-xs text-app-text-secondary mt-1 max-w-sm mx-auto leading-relaxed">
-            {projects.length === 0 && !hasActiveFilters
-              ? "There are no project reviews in the community feed yet. Share your experience to help other BITSians."
-              : "Try clearing search queries, adjusting supervisor department or student branch filters to view BITSian projects."}
+            Try clearing search queries, adjusting supervisor department or student branch filters to view BITSian projects.
           </p>
-          {hasActiveFilters && (
+          {(searchQuery || filterDept !== "all" || filterBranch !== "all" || filterDomain !== "all" || filterType !== "all") && (
             <button
               onClick={() => {
                 setSearchQuery("");
@@ -643,9 +621,9 @@ export default function ProjectsView({
                     {project.taken_in}
                   </span>
                   <div className="flex gap-1.5 items-center shrink-0">
-                    {project.type && (
+                    {(project.type || project.project_type) && (
                       <span className="bg-app-accent/10 px-2 py-0.5 rounded text-[10px] font-bold font-mono text-app-accent border border-app-accent/20">
-                        {project.type}
+                        {project.type || project.project_type}
                       </span>
                     )}
                     <span className="bg-app-bg px-2 py-0.5 rounded text-[10px] font-bold font-mono text-app-text-secondary border border-app-border max-w-[120px] truncate">
